@@ -33,10 +33,14 @@ cd frontend
 pnpm install
 pnpm dev
 
-# Backend
+# Backend（Python 3.12，pydantic 2.6 在 3.13 上没有预编译包）
 cd backend
 uv sync
 APP_ENV=local uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Backend tests
+cd backend
+APP_ENV=test uv run pytest
 ```
 
 隐藏可见性回归脚本（后端）：
