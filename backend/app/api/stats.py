@@ -1,5 +1,5 @@
 """API layer for Stats - HTTP handling."""
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from app.database import get_db
