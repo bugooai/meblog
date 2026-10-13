@@ -78,9 +78,15 @@ def db():
 @pytest.fixture(scope="function")
 def client(db):
     """Create a test client with database override."""
+    # Tables come from the sync `db` fixture. The app startup hook would run
+    # create_all on the async engine, which binds connections to a different
+    # event loop than TestClient and fails from the second test onwards.
+    startup_hooks = list(app.router.on_startup)
+    app.router.on_startup.clear()
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
         yield c
+    app.router.on_startup.extend(startup_hooks)
     app.dependency_overrides.clear()
 
 

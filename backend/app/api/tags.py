@@ -5,7 +5,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.schemas import TagCreate, TagUpdate, TagResponse
 from app.services import TagService
-from app.utils.security import get_current_user
+from app.utils.security import get_current_admin_user, get_current_user
 from app.models import Admin
 
 router = APIRouter(prefix="/tags", tags=["Tags"])
@@ -24,11 +24,9 @@ async def list_tags(
 async def create_new_tag(
     tag: TagCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Admin] = Depends(get_current_user)
+    current_admin: Admin = Depends(get_current_admin_user)
 ):
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return await TagService.create_tag_service(db, tag, current_user)
+    return await TagService.create_tag_service(db, tag, current_admin)
 
 
 @router.put("/{tag_id}", response_model=TagResponse)
@@ -36,20 +34,16 @@ async def update_existing_tag(
     tag_id: str,
     tag: TagUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Admin] = Depends(get_current_user)
+    current_admin: Admin = Depends(get_current_admin_user)
 ):
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return await TagService.update_tag_service(db, tag_id, tag, current_user)
+    return await TagService.update_tag_service(db, tag_id, tag, current_admin)
 
 
 @router.delete("/{tag_id}", status_code=204)
 async def delete_existing_tag(
     tag_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Admin] = Depends(get_current_user)
+    current_admin: Admin = Depends(get_current_admin_user)
 ):
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
     await TagService.delete_tag_service(db, tag_id)
     return None

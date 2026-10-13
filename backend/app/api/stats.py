@@ -5,7 +5,7 @@ from typing import Optional
 from app.database import get_db
 from app.services import StatsService
 from app.dao import StatsDao
-from app.utils.security import get_current_user
+from app.utils.security import get_current_admin_user, get_current_user
 from app.models import Admin
 
 router = APIRouter(prefix="/stats", tags=["Statistics"])
@@ -64,11 +64,6 @@ async def get_public_summary(
 @router.get("/admin-dashboard")
 async def get_admin_dashboard(
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Admin] = Depends(get_current_user)
+    current_admin: Admin = Depends(get_current_admin_user)
 ):
-    if current_user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
     return await StatsDao.get_admin_dashboard_data(db)

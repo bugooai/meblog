@@ -5,7 +5,7 @@ from typing import List, Optional
 from app.database import get_db
 from app.schemas import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services import ProjectService
-from app.utils.security import get_current_user
+from app.utils.security import get_current_admin_user, get_current_user
 from app.models import Admin
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -39,11 +39,9 @@ async def get_project_by_slug_endpoint(
 async def create_new_project(
     project: ProjectCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Admin] = Depends(get_current_user)
+    current_admin: Admin = Depends(get_current_admin_user)
 ):
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return await ProjectService.create_project(db, project, current_user)
+    return await ProjectService.create_project(db, project, current_admin)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
@@ -51,20 +49,16 @@ async def update_existing_project(
     project_id: str,
     project: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Admin] = Depends(get_current_user)
+    current_admin: Admin = Depends(get_current_admin_user)
 ):
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return await ProjectService.update_project(db, project_id, project, current_user)
+    return await ProjectService.update_project(db, project_id, project, current_admin)
 
 
 @router.delete("/{project_id}", status_code=204)
 async def delete_existing_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Admin] = Depends(get_current_user)
+    current_admin: Admin = Depends(get_current_admin_user)
 ):
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
     await ProjectService.delete_project(db, project_id)
     return None

@@ -1,5 +1,5 @@
 """DAO layer for Admin - database CRUD operations."""
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Admin
@@ -25,6 +25,14 @@ class AdminDao:
             return (await db.execute(select(Admin).where(Admin.email == email))).scalar_one_or_none()
         except Exception as e:
             logger.error(f"Error getting admin by email {email}: {e}")
+            raise
+
+    @staticmethod
+    async def count_accounts(db: AsyncSession) -> int:
+        try:
+            return (await db.execute(select(func.count()).select_from(Admin))).scalar_one()
+        except Exception as e:
+            logger.error(f"Error counting accounts: {e}")
             raise
 
     @staticmethod

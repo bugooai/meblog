@@ -29,8 +29,14 @@ class AuthService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already registered"
                 )
+            if not settings.ALLOW_REGISTRATION and await AdminDao.count_accounts(db) > 0:
+                logger.warning(f"Registration rejected for {admin.username}: signup is closed")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Registration is closed"
+                )
             result = await AdminDao.create_admin(db, admin)
-            logger.info(f"Admin registered: {admin.username}")
+            logger.info(f"Account registered: {admin.username}")
             return result
         except HTTPException:
             raise
