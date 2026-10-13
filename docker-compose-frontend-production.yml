@@ -1,0 +1,28 @@
+# ==========================
+# meblog 前端 (Next.js) - 生产环境
+# 使用: docker compose -f docker-compose-frontend-production.yml up -d
+# ==========================
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_ENV: ${NEXT_PUBLIC_ENV:-production}
+    image: meblog-frontend-prod:latest
+    container_name: meblog-frontend-prod
+    restart: unless-stopped
+    ports:
+      - "9001:3000"
+    environment:
+      - NEXT_PUBLIC_ENV=${NEXT_PUBLIC_ENV:-production}
+    networks:
+      - common-network
+
+networks:
+  common-network:
+    external: true
+
+# docker compose -f docker-compose-frontend-production.yml -p meblog-prod up -d --build

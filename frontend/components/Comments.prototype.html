@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comments UI Prototype - meblog</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --color-primary: #3B82F6;
+    --color-primary-hover: #2563EB;
+    --color-primary-light: #EFF6FF;
+    --color-background: #FFFFFF;
+    --color-background-secondary: #F8FAFC;
+    --color-foreground: #1E293B;
+    --color-foreground-secondary: #64748B;
+    --color-border: #E2E8F0;
+    --shadow-card: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+    --radius-card: 12px;
+    --radius-btn: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Noto Sans SC', sans-serif;
+    background: #F1F5F9;
+    color: var(--color-foreground);
+    padding: 32px 16px;
+    line-height: 1.6;
+  }
+  .page-container {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  /* ─── Section Title ─── */
+  .section-title {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--color-foreground);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title svg { color: var(--color-primary); }
+  .section-title .count {
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--color-foreground-secondary);
+  }
+
+  /* ─── Card ─── */
+  .card {
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+
+  /* ─── Form ─── */
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 480px) {
+    .form-grid { grid-template-columns: 1fr; }
+  }
+  .input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: var(--radius-btn);
+    background: var(--color-background-secondary);
+    border: 1px solid var(--color-border);
+    color: var(--color-foreground);
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input:focus { border-color: var(--color-primary); }
+  .input::placeholder { color: var(--color-foreground-secondary); }
+  textarea.input {
+    resize: none;
+    min-height: 100px;
+  }
+  .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .btn-primary {
+    padding: 8px 20px;
+    background: var(--color-primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-btn);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn-primary:hover { background: var(--color-primary-hover); }
+  .btn-ghost {
+    padding: 8px 16px;
+    background: transparent;
+    color: var(--color-foreground-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-btn);
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  /* ─── Divider ─── */
+  .divider {
+    height: 1px;
+    background: var(--color-border);
+    margin-bottom: 24px;
+  }
+
+  /* ─── Empty State ─── */
+  .empty-state {
+    padding: 40px 0;
+    text-align: center;
+    color: var(--color-foreground-secondary);
+    font-size: 0.875rem;
+  }
+
+  /* ─── Comment Item ─── */
+  .comment-item {
+    padding-bottom: 20px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .comment-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 0;
+  }
+  .comment-body {
+    display: flex;
+    gap: 12px;
+  }
+  .avatar {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--color-primary-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .avatar svg { color: var(--color-primary); }
+  .comment-content { flex: 1; min-width: 0; }
+  .comment-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .comment-nickname {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-foreground);
+  }
+  .comment-sep {
+    color: var(--color-foreground-secondary);
+    font-size: 0.75rem;
+  }
+  .comment-time {
+    font-size: 0.75rem;
+    color: var(--color-foreground-secondary);
+  }
+  .comment-text {
+    margin-top: 4px;
+    font-size: 0.875rem;
+    color: var(--color-foreground);
+    line-height: 1.8;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .comment-action {
+    margin-top: 6px;
+    font-size: 0.75rem;
+    color: var(--color-foreground-secondary);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    transition: color 0.2s;
+  }
+  .comment-action:hover { color: var(--color-primary); }
+
+  /* ─── Reply ─── */
+  .replies {
+    margin-top: 12px;
+    padding-left: 16px;
+    border-left: 2px solid var(--color-border);
+  }
+  .reply-item {
+    margin-bottom: 12px;
+  }
+  .reply-item:last-child { margin-bottom: 0; }
+
+  /* ─── Reply Form (inline) ─── */
+  .reply-form {
+    margin-top: 12px;
+    margin-left: 44px;
+    background: var(--color-background-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-btn);
+    padding: 14px;
+  }
+  .reply-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  /* ─── Prototype Labels ─── */
+  .spec-label {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    background: #FEF9C3;
+    color: #854D0E;
+    border: 1px solid #FDE047;
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-bottom: 4px;
+  }
+  .spec-block {
+    background: #FFFBEB;
+    border: 1px dashed #F59E0B;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #92400E;
+  }
+  .spec-block strong { display: block; margin-bottom: 4px; }
+  .spec-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .spec-item { min-width: 120px; }
+</style>
+</head>
+<body>
+<div class="page-container">
+
+  <!-- ─── Design Specs ─── -->
+  <div class="spec-block">
+    <strong>📐 Design Tokens — meblog Comments</strong>
+    <div class="spec-row">
+      <div class="spec-item"><strong>Primary</strong><br>#3B82F6</div>
+      <div class="spec-item"><strong>Background</strong><br>#FFFFFF</div>
+      <div class="spec-item"><strong>Bg Secondary</strong><br>#F8FAFC</div>
+      <div class="spec-item"><strong>Foreground</strong><br>#1E293B</div>
+      <div class="spec-item"><strong>Foreground 2nd</strong><br>#64748B</div>
+      <div class="spec-item"><strong>Border</strong><br>#E2E8F0</div>
+      <div class="spec-item"><strong>Radius Card</strong><br>12px</div>
+      <div class="spec-item"><strong>Radius Btn</strong><br>8px</div>
+      <div class="spec-item"><strong>Shadow</strong><br>0 1px 3px rgba(0,0,0,0.1)</div>
+    </div>
+  </div>
+
+  <!-- ─── Section Title ─── -->
+  <span class="spec-label">① Section Title</span>
+  <h2 class="section-title">
+    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+    </svg>
+    评论 <span class="count">(3)</span>
+  </h2>
+
+  <!-- ─── Comment Form ─── -->
+  <span class="spec-label">② Comment Form</span>
+  <div class="card">
+    <div class="form-grid">
+      <input type="text" class="input" placeholder="昵称 *" value="前端小明">
+      <input type="email" class="input" placeholder="邮箱 *（仅管理员可见）" value="xiaoming@example.com">
+    </div>
+    <textarea class="input" placeholder="写下你的评论...">这篇文章讲得很清楚，Tailwind 的设计思路确实很优雅。</textarea>
+    <div class="form-actions">
+      <button class="btn-ghost">取消</button>
+      <button class="btn-primary">发表评论</button>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ─── Comment List ─── -->
+  <span class="spec-label">③ Comment List</span>
+
+  <!-- Comment 1 (with replies) -->
+  <div class="card" style="padding: 0 24px; margin-bottom: 16px;">
+    <div class="comment-item">
+      <div class="comment-body">
+        <div class="avatar">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+        </div>
+        <div class="comment-content">
+          <div class="comment-meta">
+            <span class="comment-nickname">技术小刘</span>
+            <span class="comment-sep">·</span>
+            <span class="comment-time">3 天前</span>
+          </div>
+          <p class="comment-text">Tailwind 确实很强大，但初学者上手曲线还是比较陡的。我建议先理解 utility-first 的核心理念，再动手实践会顺畅很多。</p>
+          <button class="comment-action">回复</button>
+        </div>
+      </div>
+
+      <!-- Replies -->
+      <div class="replies">
+        <div class="reply-item">
+          <div class="comment-body">
+            <div class="avatar">
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            </div>
+            <div class="comment-content">
+              <div class="comment-meta">
+                <span class="comment-nickname">博客作者</span>
+                <span class="comment-sep">·</span>
+                <span class="comment-time">2 天前</span>
+              </div>
+              <p class="comment-text">说得对！其实官网的教程写得很好，跟着做一遍就能入门了。</p>
+              <button class="comment-action">回复</button>
+            </div>
+          </div>
+        </div>
+        <div class="reply-item">
+          <div class="comment-body">
+            <div class="avatar">
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            </div>
+            <div class="comment-content">
+              <div class="comment-meta">
+                <span class="comment-nickname">前端新人</span>
+                <span class="comment-sep">·</span>
+                <span class="comment-time">昨天</span>
+              </div>
+              <p class="comment-text">感谢分享！打算周末跟着教程走一遍</p>
+              <button class="comment-action">回复</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Comment 2 -->
+    <div class="comment-item">
+      <div class="comment-body">
+        <div class="avatar">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+        </div>
+        <div class="comment-content">
+          <div class="comment-meta">
+            <span class="comment-nickname">全栈打工人</span>
+            <span class="comment-sep">·</span>
+            <span class="comment-time">1 周前</span>
+          </div>
+          <p class="comment-text">收藏了！正好在做技术选型，这篇文章给了我很大帮助。</p>
+          <button class="comment-action">回复</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Comment 3 -->
+    <div class="comment-item">
+      <div class="comment-body">
+        <div class="avatar">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+        </div>
+        <div class="comment-content">
+          <div class="comment-meta">
+            <span class="comment-nickname">Vue 转 Tailwind</span>
+            <span class="comment-sep">·</span>
+            <span class="comment-time">刚刚</span>
+          </div>
+          <p class="comment-text">请问博主，dark mode 模式下你们是怎么处理的？</p>
+          <button class="comment-action">回复</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Reply Form Open State ─── -->
+  <span class="spec-label">④ Reply Form (expanded)</span>
+  <div class="card">
+    <div style="font-size: 12px; color: var(--color-foreground-secondary); margin-bottom: 8px;">
+      回复 @技术小刘
+    </div>
+    <textarea class="input" placeholder="写下你的评论...">谢谢分享，我也遇到同样的问题</textarea>
+    <div class="reply-form-actions">
+      <button class="btn-ghost">取消</button>
+      <button class="btn-primary">回复</button>
+    </div>
+  </div>
+
+  <!-- ─── Dimension Annotations ─── -->
+  <div class="spec-block" style="margin-top: 32px;">
+    <strong>📏 关键尺寸标注</strong>
+    <div class="spec-row" style="margin-top: 8px;">
+      <div class="spec-item">评论卡片 padding<br>24px</div>
+      <div class="spec-item">头像尺寸<br>32×32px</div>
+      <div class="spec-item">头像圆角<br>50% (圆形)</div>
+      <div class="spec-item">评论间距<br>20px</div>
+      <div class="spec-item">回复缩进线<br>2px border-left</div>
+      <div class="spec-item">回复缩进<br>16px padding-left</div>
+      <div class="spec-item">昵称字号<br>14px / font-weight: 600</div>
+      <div class="spec-item">时间/操作字号<br>12px</div>
+      <div class="spec-item">评论内容字号<br>14px / line-height: 1.8</div>
+      <div class="spec-item">表单输入框高度<br>40px (padding 10px 14px)</div>
+      <div class="spec-item">表单圆角<br>8px</div>
+      <div class="spec-item">移动端断点<br>480px (单列布局)</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

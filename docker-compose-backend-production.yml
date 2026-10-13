@@ -1,0 +1,32 @@
+# ==========================
+# meblog 后端 (FastAPI) - 生产环境
+# 使用: docker compose -f docker-compose-backend-production.yml up -d
+# ==========================
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: meblog-backend-prod:latest
+    container_name: meblog-backend-prod
+    restart: unless-stopped
+    ports:
+      - "9000:8000"
+    environment:
+      - APP_ENV=production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - common-network
+
+networks:
+  common-network:
+    external: true
+
+# docker compose -f docker-compose-backend-production.yml -p meblog-prod up -d --build

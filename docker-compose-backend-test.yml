@@ -1,0 +1,34 @@
+# ==========================
+# meblog 后端 (FastAPI) - 测试环境
+# 使用: docker compose -f docker-compose-backend-test.yml up -d
+# ==========================
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: meblog-backend-test:latest
+    container_name: meblog-backend-test
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      common-network:
+        aliases:
+          - meblog-backend
+
+networks:
+  common-network:
+    external: true
+
+# docker compose -f docker-compose-frontend-test.yml -p meblog-test up -d --build

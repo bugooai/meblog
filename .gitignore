@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.venv/
+
+# Build output
+dist/
+build/
+frontend/.next/
+
+# Environment
+.env
+.env.local
+.env.production  
+.env.test
+deploy.sh
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Database
+*.db
+*.sqlite
+
+# Pycache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# UV
+.openclaw/
+
+# TypeScript build cache
+frontend/tsconfig.tsbuildinfo
+
+# claude
+AGENTS.md
+CLAUDE.md
+.claude
+.claude/*

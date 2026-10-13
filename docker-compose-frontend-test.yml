@@ -1,0 +1,28 @@
+# ==========================
+# meblog 前端 (Next.js) - 测试环境
+# 使用: docker compose -f docker-compose-frontend-test.yml up -d
+# ==========================
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_ENV: ${NEXT_PUBLIC_ENV:-test}
+    image: meblog-frontend-test:latest
+    container_name: meblog-frontend-test
+    restart: unless-stopped
+    ports:
+      - "8001:3000"
+    environment:
+      - NEXT_PUBLIC_ENV=${NEXT_PUBLIC_ENV:-test}
+    networks:
+      - common-network
+
+networks:
+  common-network:
+    external: true
+
+# docker compose -f docker-compose-backend-test.yml -p meblog-test up -d --build
