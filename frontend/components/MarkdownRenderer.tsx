@@ -96,7 +96,7 @@ function MarkdownImage({
       }
 
       try {
-        const signedUrl = await resolveSignedMediaUrl(src);
+        const { signed_url: signedUrl } = await resolveSignedMediaUrl(src);
         if (!cancelled) {
           setResolvedSrc(signedUrl || src);
         }
