@@ -45,7 +45,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"admin\",\n  \"email\": \"admin@example.com\",\n  \"password\": \"Admin12345\"\n}"
+              "raw": "{\n  \"username\": \"admin\",\n  \"email\": \"admin@example.com\",\n  \"password\": \"<your-password>\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}{{apiPrefix}}/auth/register",
@@ -80,7 +80,7 @@
                 },
                 {
                   "key": "password",
-                  "value": "Admin12345",
+                  "value": "<your-password>",
                   "type": "text"
                 }
               ]

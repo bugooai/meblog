@@ -113,12 +113,25 @@ pnpm dev --port 3000
 2. **外部环境变量优先级高于 `.env.local`**。pydantic-settings 先看 `os.environ`。如果你的机器上别的项目往 shell 里注入过 `DATABASE_URL`，meblog 会直接连过去，而启动钩子会往那个库里建表。建议每次跑之前确认：`echo $env:DATABASE_URL`（应为空），并把 `DATABASE_URL` 写死在 `.env.local` 里。
 3. **`next dev` 认 `PORT` 环境变量**。如果别的工具在你的 shell 里 export 过 `PORT`，前端会去监听那个端口而不是 3000（我这边就被一个 `PORT=3100` 顶到了 `EADDRINUSE`）。用 `pnpm dev --port 3000` 显式指定最稳。顺带：`NODE_ENV` 也别在 shell 里全局设成 `production`，`next dev` 会警告配置不一致。
 
-## 6. 不要执行 `backend/create_tables.py`
+## 6. `backend/create_tables.py` 和 `test_connection.py`
 
-`FEATURES.md` 的开发步骤里让你跑 `uv run python create_tables.py`。**本地千万别跑**：那个脚本第 12 行把 `DATABASE_URL` 硬编码成了一个公网 PostgreSQL 地址（`116.62.176.216:6001/meblog_test`，用户名密码也写在里面），执行它会去改那台远端库，跟你的本地库无关。
-本地建表由启动钩子自动完成，不需要这个脚本。
+这两个脚本以前把一台公网测试库的地址和口令写死在源码里（仓库是公开的，等于凭据泄露），现在已改成**只从配置读** `DATABASE_URL`：环境变量优先，其次 `backend/.env.<APP_ENV>`。
 
-> 附带问题：这份凭据已经进了 git 历史并且推到了公开仓库，建议轮换该数据库密码，并把脚本改成读 `settings`。已记在优化清单 A 段。
+本地一般用不上它们 —— 启动钩子会自动建表（`app/main.py` 的 `on_startup`）。要给 PostgreSQL 初始化时才需要：
+
+```powershell
+cd D:\code\ai\meblog\backend
+# 先看连的是哪个库（打印时口令会被打码）
+$env:APP_ENV = "local"
+uv run python test_connection.py
+
+# 确认无误后再建表；目标不是 SQLite/localhost 时必须显式加 --yes
+uv run python create_tables.py --yes
+```
+
+`--yes` 是刻意加的一道闸：不加这个参数，脚本拒绝写入任何非本地库。`backend/migrate.sh` 同样不再内置默认口令，缺 `DATABASE_URL` 会直接报错退出。
+
+> 遗留问题：旧凭据已经在 git 历史里（`e276dd4` 导入提交及其之前的对象），改代码不等于收回。**那台库的口令需要轮换**，并且要确认它是否还对公网开放。这一条需要你自己动手，我无法替你改服务器口令。详见 [meblog 体检与优化清单](https://github.com/bugooai/meblog) 对应任务文档 A 段。
 
 ## 7. 常用自检
 
