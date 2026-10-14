@@ -147,5 +147,40 @@ Invoke-RestMethod http://127.0.0.1:3000/api/v1/posts
 #   首页是 ISR 缓存，revalidate = 180 秒；要么等 3 分钟，要么把第 4 节的 revalidate 三件套配上
 ```
 
-后端测试：`cd backend; uv run pytest`（66 用例，当前 3 个历史失败用例见优化清单 C 段）。
+后端测试：`cd backend; uv run pytest`（126 用例，当前 3 个历史失败用例见优化清单 C 段）。
 前端构建：`cd frontend; pnpm run build`。
+
+## 8. GitHub 推拉不通时（代理）
+
+2026-10-14 在这台机器上实测到的现象：
+
+| 目标 | 直连 | 走 `host.docker.internal:7897` |
+|---|---|---|
+| `github.com`（git 推拉走这里） | TCP 超时 21s | 200 / 1.5s |
+| `api.github.com` | 200 / 0.37s | — |
+| `codeload.github.com` | 301 / 0.55s | — |
+
+所以「api.github.com 通」不等于「能 git push」，两件事分开测。
+
+只给 github.com 配代理，别的流量照常，也不需要用完手动切回：
+
+```powershell
+# 你本机（Windows + Clash）
+git config --global http.https://github.com.proxy http://127.0.0.1:7897
+git config --global --unset http.https://github.com.proxy   # 撤销
+```
+
+```bash
+# 容器里（Paperclip agent 环境），写在仓库级就够
+git config remote.origin.proxy http://host.docker.internal:7897
+git config --unset remote.origin.proxy                      # 撤销
+```
+
+端口以你 Clash 的 mixed 端口为准（这里是 7897；常见默认还有 7890）。验证：
+
+```bash
+git ls-remote https://github.com/bugooai/meblog HEAD   # 应该出 SHA
+curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代理拖慢
+```
+
+外部控制器（`9090`）默认只监听 Windows 的 `127.0.0.1`，容器 `host.docker.internal:9090` 会直接被拒。想让容器里的 agent 查延迟/切节点，需要在 Clash 里打开「允许局域网连接」（`allow-lan: true`）；不开的话只有 git 这条路能用。
