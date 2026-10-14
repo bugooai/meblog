@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import type { AboutData } from '@/api/about';
-import { authorDisplayName, absoluteUrl, fetchSeoMeta, fetchAllPublishedPosts, getSiteUrl } from '@/app/lib/seo';
+import {
+  DEFAULT_SITE_LOGO_URL,
+  authorDisplayName,
+  absoluteUrl,
+  fetchSeoMeta,
+  fetchAllPublishedPosts,
+  getSiteUrl,
+} from '@/app/lib/seo';
 import { fetchFromServerApi } from '@/app/lib/server-api';
 
 export const revalidate = 1800;
@@ -82,14 +89,14 @@ export async function GET() {
     `    <link>${escapeXml(siteUrl)}</link>`,
     `    <description>${escapeXml(seo.siteDescription)}</description>`,
     '    <language>zh-cn</language>',
-    `    <docs>${escapeXml(`${siteUrl}/feed.xml`)}</docs>`,
+    '    <docs>https://www.rssboard.org/rss-specification</docs>',
     '    <ttl>30</ttl>',
     `    <atom:link href="${escapeXml(`${siteUrl}/feed.xml`)}" rel="self" type="application/rss+xml" />`,
     `    <lastBuildDate>${buildDate}</lastBuildDate>`,
     `    <managingEditor>${escapeXml(authorName)} (${escapeXml(siteUrl)})</managingEditor>`,
     `    <webMaster>${escapeXml(authorName)} (${escapeXml(siteUrl)})</webMaster>`,
     '    <image>',
-    '      <url>' + escapeXml(absoluteUrl(seo.siteLogoUrl || '/bugoo-logo.png')) + '</url>',
+    '      <url>' + escapeXml(absoluteUrl(seo.siteLogoUrl || DEFAULT_SITE_LOGO_URL)) + '</url>',
     `      <title>${escapeXml(seo.siteName)}</title>`,
     `      <link>${escapeXml(siteUrl)}</link>`,
     '    </image>',

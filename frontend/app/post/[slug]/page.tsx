@@ -9,6 +9,7 @@ import {
   authorDisplayName,
   buildArticleJsonLd,
   buildBreadcrumbJsonLd,
+  fallbackOgImageUrl,
   fetchSeoMeta,
   postImageUrl,
 } from '@/app/lib/seo';
@@ -113,7 +114,7 @@ export async function generateMetadata({ params }: PostPageProps): Promise<Metad
 
   const seo = await fetchSeoMeta();
   const description = (post.summary || fallbackDescription(post.content)).slice(0, 200);
-  const image = postImageUrl(post, seo.defaultOgImageUrl);
+  const image = postImageUrl(post, fallbackOgImageUrl(seo)) ?? undefined;
   const canonicalUrl = absoluteUrl(`/post/${post.slug}`);
   const authorName = authorDisplayName(await getAuthorProfile(), post.author?.username || seo.siteName);
 
@@ -133,13 +134,13 @@ export async function generateMetadata({ params }: PostPageProps): Promise<Metad
       modifiedTime: post.updated_at || post.created_at,
       authors: [authorName],
       tags: post.tags.map((tag) => tag.name),
-      images: image ? [{ url: absoluteUrl(image), width: 1200, height: 630, alt: post.title }] : undefined,
+      images: image ? [{ url: absoluteUrl(image), width: 1200, height: 630, alt: post.title }] : [],
     },
     twitter: {
       card: image ? 'summary_large_image' : 'summary',
       title: post.title,
       description,
-      images: image ? [absoluteUrl(image)] : undefined,
+      images: image ? [absoluteUrl(image)] : [],
     },
   };
 }

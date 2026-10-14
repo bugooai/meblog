@@ -7,6 +7,7 @@ const DEFAULT_SITE_URL = 'http://localhost:3000';
 
 export const FALLBACK_SITE_NAME = 'Meblog';
 export const FALLBACK_SITE_DESCRIPTION = '分享技术与生活的个人博客';
+export const DEFAULT_SITE_LOGO_URL = '/bugoo-logo.png?v=ahernli-round';
 
 
 export function getSiteUrl(): string {
@@ -95,6 +96,12 @@ export function postImageUrl(post: PostDetail, fallback: string | null): string 
   return post.cover || post.project?.cover || fallback || null;
 }
 
+// 分享卡片的图片兜底链：后台默认 OG 图 -> 站点 logo -> 仓库自带 logo。
+// 没有这条兜底时，没封面的文章 og:image 会整个缺失，微信/Twitter 分享出去是白板。
+export function fallbackOgImageUrl(meta: SeoMeta): string {
+  return meta.defaultOgImageUrl || meta.siteLogoUrl || DEFAULT_SITE_LOGO_URL;
+}
+
 export function buildWebsiteJsonLd(meta: SeoMeta): Record<string, unknown> {
   return {
     '@context': 'https://schema.org',
@@ -112,7 +119,7 @@ export function buildArticleJsonLd(
   authorName: string
 ): Record<string, unknown> {
   const url = absoluteUrl(`/post/${post.slug}`);
-  const image = postImageUrl(post, meta.defaultOgImageUrl);
+  const image = postImageUrl(post, fallbackOgImageUrl(meta));
   const publisherLogo = meta.siteLogoUrl ? absoluteUrl(meta.siteLogoUrl) : undefined;
 
   return {

@@ -2,15 +2,17 @@ import type { Metadata, Viewport } from 'next';
 import { Providers } from './providers';
 import Layout from '@/components/Layout';
 import {
+  DEFAULT_SITE_LOGO_URL,
   FALLBACK_SITE_DESCRIPTION,
   buildWebsiteJsonLd,
+  fallbackOgImageUrl,
   fetchSeoMeta,
   getSiteUrl,
 } from '@/app/lib/seo';
 import './globals.css';
 
 const defaultIcon = '/icon.svg?v=ahernli-round';
-const defaultAppleIcon = '/bugoo-logo.png?v=ahernli-round';
+const defaultAppleIcon = DEFAULT_SITE_LOGO_URL;
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -24,7 +26,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const faviconUrl = seo.siteFaviconUrl || defaultIcon;
   const logoUrl = seo.siteLogoUrl || defaultAppleIcon;
   const description = seo.siteDescription || FALLBACK_SITE_DESCRIPTION;
-  const ogImage = seo.defaultOgImageUrl || logoUrl;
+  const ogImage = fallbackOgImageUrl(seo);
 
   return {
     metadataBase: new URL(siteUrl),
