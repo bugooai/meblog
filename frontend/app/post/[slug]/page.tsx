@@ -11,6 +11,7 @@ import {
   buildBreadcrumbJsonLd,
   fallbackOgImageUrl,
   fetchSeoMeta,
+  metadataImageUrl,
   postImageUrl,
 } from '@/app/lib/seo';
 import { fetchFromServerApi, ServerApiError } from '@/app/lib/server-api';
@@ -114,7 +115,7 @@ export async function generateMetadata({ params }: PostPageProps): Promise<Metad
 
   const seo = await fetchSeoMeta();
   const description = (post.summary || fallbackDescription(post.content)).slice(0, 200);
-  const image = postImageUrl(post, fallbackOgImageUrl(seo)) ?? undefined;
+  const image = (await metadataImageUrl(postImageUrl(post, null), fallbackOgImageUrl(seo))) ?? undefined;
   const canonicalUrl = absoluteUrl(`/post/${post.slug}`);
   const authorName = authorDisplayName(await getAuthorProfile(), post.author?.username || seo.siteName);
 
@@ -134,13 +135,13 @@ export async function generateMetadata({ params }: PostPageProps): Promise<Metad
       modifiedTime: post.updated_at || post.created_at,
       authors: [authorName],
       tags: post.tags.map((tag) => tag.name),
-      images: image ? [{ url: absoluteUrl(image), width: 1200, height: 630, alt: post.title }] : [],
+      images: image ? [{ url: image, width: 1200, height: 630, alt: post.title }] : [],
     },
     twitter: {
       card: image ? 'summary_large_image' : 'summary',
       title: post.title,
       description,
-      images: image ? [absoluteUrl(image)] : [],
+      images: image ? [image] : [],
     },
   };
 }
@@ -153,7 +154,7 @@ export default async function PostPage({ params }: PostPageProps) {
   const likeStatus = await getLikeStatusBySlug(slug);
   const [seo, about] = await Promise.all([fetchSeoMeta(), getAuthorProfile()]);
   const authorName = authorDisplayName(about, ensuredPost.author?.username || seo.siteName);
-  const article = buildArticleJsonLd(ensuredPost, seo, authorName);
+  const article = await buildArticleJsonLd(ensuredPost, seo, authorName);
   const breadcrumbItems = [
     { name: '首页', path: '/' },
     ...(ensuredPost.project ? [{ name: ensuredPost.project.name, path: `/project/${ensuredPost.project.slug}` }] : []),

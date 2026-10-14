@@ -31,7 +31,10 @@ export async function fetchAllPublishedPosts(pageSize = 100): Promise<PostListIt
 
     return posts;
   } catch (error) {
-    console.error('[seo] fallback to empty posts for feed/sitemap generation', error);
+    console.error(
+      '[seo] 拿不到文章，sitemap.xml / feed.xml 会生成成空的。检查构建时有没有传 SERVER_API_BASE_URL 或 NEXT_PUBLIC_API_BASE_URL —— 这个值不会打进运行时，只在这次构建里用到。',
+      error
+    );
     return [];
   }
 }
@@ -96,6 +99,31 @@ export function postImageUrl(post: PostDetail, fallback: string | null): string 
   return post.cover || post.project?.cover || fallback || null;
 }
 
+// 爬虫不执行 JS，所以 og:image / twitter:image / JSON-LD / RSS 里的图片必须是
+// 能直接 GET 到的绝对 https 地址。后台上传的封面存成 oss://bucket/key，而 bucket
+// 是私有的（直链 403），不做这一步换签名的话分享卡片就是白板。
+// 签名地址会过期，这里让 Next 的数据缓存只留 300 秒，必须明显短于
+// OSS_SIGN_EXPIRE_SECONDS（默认 3600），否则页面会发出去已过期的链接。
+export async function metadataImageUrl(
+  value: string | null | undefined,
+  fallback?: string | null
+): Promise<string | null> {
+  const raw = value || fallback;
+  if (!raw) return null;
+  if (!raw.startsWith('oss://')) return absoluteUrl(raw);
+  try {
+    const { signed_url } = await fetchFromServerApi<{ signed_url: string }>(
+      `/files/signed-url?key=${encodeURIComponent(raw)}`,
+      { revalidate: 300 }
+    );
+    if (signed_url) return signed_url;
+  } catch {
+    // 签名失败（OSS 没配、后端不可达）就退回兜底图，别把整个页面打挂。
+  }
+  const safeFallback = fallback && !fallback.startsWith('oss://') ? fallback : null;
+  return safeFallback ? absoluteUrl(safeFallback) : null;
+}
+
 // 分享卡片的图片兜底链：后台默认 OG 图 -> 站点 logo -> 仓库自带 logo。
 // 没有这条兜底时，没封面的文章 og:image 会整个缺失，微信/Twitter 分享出去是白板。
 export function fallbackOgImageUrl(meta: SeoMeta): string {
@@ -113,13 +141,13 @@ export function buildWebsiteJsonLd(meta: SeoMeta): Record<string, unknown> {
   };
 }
 
-export function buildArticleJsonLd(
+export async function buildArticleJsonLd(
   post: PostDetail,
   meta: SeoMeta,
   authorName: string
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const url = absoluteUrl(`/post/${post.slug}`);
-  const image = postImageUrl(post, fallbackOgImageUrl(meta));
+  const image = await metadataImageUrl(postImageUrl(post, null), fallbackOgImageUrl(meta));
   const publisherLogo = meta.siteLogoUrl ? absoluteUrl(meta.siteLogoUrl) : undefined;
 
   return {
@@ -127,7 +155,7 @@ export function buildArticleJsonLd(
     '@type': 'BlogPosting',
     headline: post.title.slice(0, 110),
     description: post.summary || undefined,
-    image: image ? [absoluteUrl(image)] : undefined,
+    image: image ? [image] : undefined,
     datePublished: post.created_at,
     dateModified: post.updated_at || post.created_at,
     inLanguage: 'zh-CN',

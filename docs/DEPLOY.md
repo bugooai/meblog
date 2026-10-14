@@ -87,6 +87,27 @@ curl -s -X POST http://meblog.bugooai.cn/api/v1/files/upload \
 # 期望 201，返回体里有 oss_url / 签名地址；再用浏览器打开那个地址能出图才算通
 ```
 
+### 本地已实测跑通（2026-10-14，`dev`）
+
+四项 key 填进 `backend/.env.local`（不进仓库）之后，本地 8000 + 3000 整条链实测：
+
+| 环节 | 结果 |
+|---|---|
+| `POST /api/v1/files/upload` | 201，对象真进了 bucket |
+| 返回的 `signed_url` | 200，字节和上传内容一致 |
+| 不带签名的直链 `url` | 403 —— bucket 是私有的，只有签名地址出得了图 |
+| 文章页 `og:image` / `twitter:image` | 签名地址，`twitter:card=summary_large_image`，抓取得到 200 |
+| JSON-LD `BlogPosting.image` | 同一个签名地址 |
+| `feed.xml` 的 `media:content` | 同一个签名地址，抓取得到 200 |
+
+这条链以前是坏的：封面在库里存的是 `oss://bucket/key`，只有浏览器里那段 JS 才会换成签名地址，而爬虫不执行 JS —— 微信/Twitter 抓到的就是一张坏图。现在换签名发生在服务端渲染阶段（`frontend/app/lib/seo.ts` 里的 `metadataImageUrl`）。
+
+三个必须知道的约束：
+
+1. **bucket 私有 = 图片只能靠签名地址活着**，而签名会过期（`OSS_SIGN_EXPIRE_SECONDS`，默认 3600 秒）。所以前端取签名时把数据缓存压到 300 秒，必须明显短于过期时间，否则页面会发出一条已经失效的链接。把签名地址放进长期存在的地方（收藏、RSS 阅读器缓存几天的条目、别人的截图）迟早图裂。要根治就给 bucket 开公共读或挂 CDN，然后填 `OSS_PUBLIC_BASE_URL`，图片地址不再带签名也不会过期。
+2. **对象 key 必须一字不差**。key 里日期是按年/月/日分层的目录，少一层、多一个字符都是 `NoSuchKey`。以前这种坏引用能静默存进库（页面只是图裂，没人会发现爬虫拿到的卡片是空白的），现在保存文章/项目/关于页/站点设置时后端会先确认对象真的存在，不存在直接 400（`backend/app/services/storage.py` 的 `prepare_media_value`）。
+3. **签名地址是能力，不是权限**。它谁拿到谁能看图，且 `/files/signed-url` 匿名可调用（已挡跨 bucket）。bucket 里不要放你不想公开的对象。
+
 ### 上传路径已加固（2026-10-14，`dev`）
 
 配 key 之前先把代码里两个真问题修了，并补了 33 条**不需要密钥就能跑**的测试（`backend/tests/test_file_upload.py`）：

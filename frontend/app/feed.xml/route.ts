@@ -6,6 +6,7 @@ import {
   absoluteUrl,
   fetchSeoMeta,
   fetchAllPublishedPosts,
+  metadataImageUrl,
   getSiteUrl,
 } from '@/app/lib/seo';
 import { fetchFromServerApi } from '@/app/lib/server-api';
@@ -56,19 +57,20 @@ export async function GET() {
   const latest = posts.slice(0, ITEM_LIMIT);
   const buildDate = rfc822(latest[0]?.created_at) || new Date().toUTCString();
 
-  const items = latest
-    .map((post) => {
+  const items = (
+    await Promise.all(
+      latest.map(async (post) => {
       const link = absoluteUrl(`/post/${post.slug}`);
       const description = escapeXml(stripMarkdown(post.summary || '').slice(0, 300));
       const categories = post.tags.map((tag) => `      <category>${escapeXml(tag.name)}</category>`).join('\n');
-      const image = post.cover || post.project?.cover;
+      const image = await metadataImageUrl(post.cover || post.project?.cover);
       return [
         '    <item>',
         `      <title>${escapeXml(post.title)}</title>`,
         `      <link>${escapeXml(link)}</link>`,
         `      <guid isPermaLink="true">${escapeXml(link)}</guid>`,
         `      <description>${description}</description>`,
-        image ? `      <media:content url="${escapeXml(absoluteUrl(image))}" medium="image" />` : '',
+        image ? `      <media:content url="${escapeXml(image)}" medium="image" />` : '',
         `      <author>${escapeXml(authorName)}</author>`,
         categories,
         `      <pubDate>${rfc822(post.created_at)}</pubDate>`,
@@ -76,8 +78,9 @@ export async function GET() {
       ]
         .filter(Boolean)
         .join('\n');
-    })
-    .join('\n');
+      })
+    )
+  ).join('\n');
 
   const xml = [
     '<?xml version="1.0" encoding="UTF-8"?>',

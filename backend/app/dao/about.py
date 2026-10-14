@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import AuthorProfile, SiteSettings
 from app.schemas import AboutUpdate
-from app.services.storage import normalize_media_value
+from app.services.storage import prepare_media_value
 
 
 class AboutDao:
@@ -50,9 +50,9 @@ class AboutDao:
         if update_data.username is not None:
             author.username = update_data.username
         if update_data.avatar_url is not None:
-            author.avatar_url = normalize_media_value(update_data.avatar_url)
+            author.avatar_url = prepare_media_value(update_data.avatar_url)
         if update_data.avatar_thumb_url is not None:
-            author.avatar_thumb_url = normalize_media_value(update_data.avatar_thumb_url)
+            author.avatar_thumb_url = prepare_media_value(update_data.avatar_thumb_url)
         if update_data.bio is not None:
             author.bio = update_data.bio
         if update_data.tech_stack is not None:
@@ -61,7 +61,7 @@ class AboutDao:
             tech_stack_items = []
             for index, item in enumerate(update_data.tech_stack_items):
                 parsed = item.model_dump()
-                parsed["background_image_url"] = normalize_media_value(parsed.get("background_image_url"))
+                parsed["background_image_url"] = prepare_media_value(parsed.get("background_image_url"))
                 if parsed.get("sort_order") is None:
                     parsed["sort_order"] = index
                 tech_stack_items.append(parsed)

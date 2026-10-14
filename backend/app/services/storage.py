@@ -3,6 +3,7 @@ from typing import Protocol
 from urllib.parse import unquote, urlparse
 
 import oss2
+from fastapi import HTTPException
 
 from configs import settings
 
@@ -22,6 +23,9 @@ class ObjectStorageProvider(Protocol):
         ...
 
     def sign_get_url(self, object_key: str, expires_seconds: int) -> str:
+        ...
+
+    def object_exists(self, object_key: str) -> bool:
         ...
 
 
@@ -66,7 +70,13 @@ class AliyunOSSProvider:
         )
 
     def sign_get_url(self, object_key: str, expires_seconds: int) -> str:
-        return self._bucket.sign_url("GET", object_key, expires_seconds)
+        # slash_safe=True 让对象 key 里的目录分隔符保持成 `/`，而不是被转义成 `%2F`。
+        # og:image / RSS 里的地址要经过微信、Twitter 等各种抓取器和中间层，它们对
+        # `%2F` 的处理不一致，规范化成 `/` 才是标准形态。
+        return self._bucket.sign_url("GET", object_key, expires_seconds, slash_safe=True)
+
+    def object_exists(self, object_key: str) -> bool:
+        return self._bucket.object_exists(object_key)
 
 
 def build_storage_key(bucket: str, object_key: str) -> str:
@@ -157,6 +167,37 @@ def normalize_media_value(value: str | None) -> str | None:
     if object_key and bucket:
         return build_storage_key(bucket, object_key)
     return value
+
+
+def ensure_media_exists(value: str | None) -> None:
+    """存进库的媒体引用必须指向 bucket 里真实存在的对象。
+
+    key 写错时接口不会报错，页面也只是图裂，但爬虫拿到的 og:image 会 404 ——
+    分享卡片直接变白板，而且坏数据一旦落库就很难发现。与其事后查，不如保存时就拒绝。
+    """
+    parsed = parse_storage_key(value or "")
+    if not parsed:
+        return
+
+    bucket, object_key = parsed
+    if bucket != _setting_str("OSS_BUCKET"):
+        return
+
+    try:
+        exists = get_storage_provider().object_exists(object_key)
+    except Exception:
+        # 存储后端本身不可用时不该把保存也一起打死，交给读路径的兜底逻辑。
+        return
+
+    if not exists:
+        raise HTTPException(status_code=400, detail=f"Storage object not found: {object_key}")
+
+
+def prepare_media_value(value: str | None) -> str | None:
+    """写库前统一处理媒体字段：归一化成 oss://bucket/key，再确认对象存在。"""
+    normalized = normalize_media_value(value)
+    ensure_media_exists(normalized)
+    return normalized
 
 
 def resolve_media_url(value: str | None) -> str | None:

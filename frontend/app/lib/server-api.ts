@@ -51,7 +51,11 @@ export function getServerApiBaseUrl(): string {
     return TEST_API_BASE_URL;
   }
 
-  if (process.env.NODE_ENV === 'development') {
+  // `next build` 时 NODE_ENV 是 production，但本地经常用 NEXT_PUBLIC_ENV=local
+  // 起构建（比如验 sitemap/feed 生成）。以前这种组合会掉到下面的占位域名
+  // api.yourdomain.com，抓不到文章还只留一行日志，最后静默产出一个空的
+  // sitemap.xml / feed.xml —— 比报错难查得多。所以这里认 local。
+  if (process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_ENV === 'local') {
     return DEFAULT_LOCAL_API_BASE_URL;
   }
 
