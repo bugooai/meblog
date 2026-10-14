@@ -27,6 +27,9 @@ A personal tech blog built with Next.js + FastAPI.
 
 ## Development
 
+本地从零跑起来的完整步骤、环境变量清单和已实测的坑：**[docs/RUN_LOCALLY.md](docs/RUN_LOCALLY.md)**
+（结论：本地一个环境变量都不配也能跑；缺的只是图片上传的 OSS 配置和发文缓存刷新配置。）
+
 ```bash
 # Frontend
 cd frontend
