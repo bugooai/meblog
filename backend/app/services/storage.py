@@ -214,6 +214,12 @@ def resolve_media_url(value: str | None) -> str | None:
     if not expected_bucket or bucket != expected_bucket:
         return value
 
+    # 配了 OSS_PUBLIC_BASE_URL（公共读或 CDN）就走永久地址，不再签名。
+    # 没配就说明 bucket 是私有的，只能给会过期的签名地址。
+    public_base = _setting_str("OSS_PUBLIC_BASE_URL").rstrip("/")
+    if public_base:
+        return f"{public_base}/{object_key.lstrip('/')}"
+
     try:
         provider = get_storage_provider()
         return provider.sign_get_url(object_key, _setting_int("OSS_SIGN_EXPIRE_SECONDS", 3600))

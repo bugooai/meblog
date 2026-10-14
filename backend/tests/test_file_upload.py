@@ -202,6 +202,36 @@ class TestSignedUrlEndpoint:
         assert response.status_code == 400
 
 
+class TestSignedUrlEndpointHonorsPublicBase:
+    """一个 env 决定「会过期的签名」还是「永久直链」，两条路径共用同一个接口。"""
+
+    SIGNED_URL = "/api/v1/files/signed-url"
+
+    @pytest.fixture(autouse=True)
+    def _bucket(self, monkeypatch):
+        monkeypatch.setattr(settings, "OSS_BUCKET", "test-bucket")
+
+    def test_public_base_returns_permanent_url_without_expiry(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "OSS_PUBLIC_BASE_URL", "https://cdn.example.com/blog/")
+
+        def boom():
+            raise AssertionError("配了公共读基地址就不该再去签名")
+
+        monkeypatch.setattr("app.api.files.get_storage_provider", boom)
+        response = client.get(self.SIGNED_URL, params={"key": "oss://test-bucket/covers/a.png"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["signed_url"] == "https://cdn.example.com/blog/covers/a.png"
+        assert body["expires_in"] is None
+
+    def test_without_public_base_it_still_signs(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "OSS_PUBLIC_BASE_URL", "")
+        monkeypatch.setattr("app.api.files.get_storage_provider", lambda: FakeProvider())
+        response = client.get(self.SIGNED_URL, params={"key": "oss://test-bucket/covers/a.png"})
+        assert response.status_code == 200, response.text
+        assert response.json()["signed_url"] == "https://signed.test/covers/a.png?expires=3600"
+
+
 class TestStorageKeyHelpers:
     def test_build_strips_leading_slash(self):
         assert build_storage_key("b", "/a/b.png") == "oss://b/a/b.png"
@@ -223,6 +253,21 @@ class TestStorageKeyHelpers:
 
     def test_resolve_signs_bucket_keys(self, monkeypatch):
         monkeypatch.setattr(settings, "OSS_BUCKET", "test-bucket")
+        monkeypatch.setattr("app.services.storage.get_storage_provider", lambda: FakeProvider())
+        assert resolve_media_url("oss://test-bucket/a.png") == "https://signed.test/a.png?expires=3600"
+
+    def test_public_base_url_wins_over_signing(self, monkeypatch):
+        """填了 OSS_PUBLIC_BASE_URL（公共读/CDN）就不该再发会过期的签名地址。"""
+        monkeypatch.setattr(settings, "OSS_BUCKET", "test-bucket")
+        monkeypatch.setattr(settings, "OSS_PUBLIC_BASE_URL", "https://img.example.com/blog")
+        monkeypatch.setattr("app.services.storage.get_storage_provider", lambda: FakeProvider())
+        value = resolve_media_url("oss://test-bucket/covers/a.png")
+        assert value == "https://img.example.com/blog/covers/a.png"
+        assert "?" not in value
+
+    def test_signed_url_used_when_no_public_base(self, monkeypatch):
+        monkeypatch.setattr(settings, "OSS_BUCKET", "test-bucket")
+        monkeypatch.setattr(settings, "OSS_PUBLIC_BASE_URL", "")
         monkeypatch.setattr("app.services.storage.get_storage_provider", lambda: FakeProvider())
         assert resolve_media_url("oss://test-bucket/a.png") == "https://signed.test/a.png?expires=3600"
 

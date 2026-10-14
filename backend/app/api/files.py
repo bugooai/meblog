@@ -53,6 +53,16 @@ async def get_signed_url(
     if bucket != expected_bucket:
         raise HTTPException(status_code=400, detail="Storage bucket mismatch")
 
+    # 填了 OSS_PUBLIC_BASE_URL（公共读/CDN）就给永久地址，不再发会过期的签名链接。
+    # 字段名沿用 signed_url，前台和 MarkdownRenderer 都读它，不用两处判断。
+    public_base = _setting_str("OSS_PUBLIC_BASE_URL").rstrip("/")
+    if public_base:
+        return {
+            "key": normalized_key,
+            "signed_url": f"{public_base}/{object_key.lstrip('/')}",
+            "expires_in": None,
+        }
+
     try:
         provider = get_storage_provider()
         expires_in = _setting_int("OSS_SIGN_EXPIRE_SECONDS", 3600)
