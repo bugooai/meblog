@@ -1,50 +1,82 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Providers } from './providers';
 import Layout from '@/components/Layout';
-import { fetchFromServerApi } from '@/app/lib/server-api';
-import type { SiteSettings } from '@/api/settings';
+import {
+  DEFAULT_SITE_LOGO_URL,
+  FALLBACK_SITE_DESCRIPTION,
+  buildWebsiteJsonLd,
+  fallbackOgImageUrl,
+  fetchSeoMeta,
+  getSiteUrl,
+} from '@/app/lib/seo';
 import './globals.css';
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || 'http://localhost:3000';
-const defaultSiteName = '技术博客';
-const defaultDescription = '分享技术与生活的个人博客';
 const defaultIcon = '/icon.svg?v=ahernli-round';
-const defaultAppleIcon = '/bugoo-logo.png?v=ahernli-round';
+const defaultAppleIcon = DEFAULT_SITE_LOGO_URL;
 
-async function getServerSiteSettings(): Promise<SiteSettings | null> {
-  try {
-    return await fetchFromServerApi<SiteSettings>('/settings/site', { revalidate: 180 });
-  } catch {
-    return null;
-  }
-}
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#0f172a',
+};
 
 export async function generateMetadata(): Promise<Metadata> {
-  const siteSettings = await getServerSiteSettings();
-  const siteName = siteSettings?.site_name || defaultSiteName;
-  const faviconUrl = siteSettings?.site_favicon_url || defaultIcon;
-  const siteLogoUrl = siteSettings?.site_logo_url || defaultAppleIcon;
+  const seo = await fetchSeoMeta();
+  const siteUrl = getSiteUrl();
+  const faviconUrl = seo.siteFaviconUrl || defaultIcon;
+  const logoUrl = seo.siteLogoUrl || defaultAppleIcon;
+  const description = seo.siteDescription || FALLBACK_SITE_DESCRIPTION;
+  const ogImage = fallbackOgImageUrl(seo);
 
   return {
     metadataBase: new URL(siteUrl),
-    title: `${siteName} - 技术博客`,
-    description: defaultDescription,
+    title: {
+      default: `${seo.siteName} · 独立开发者与 AI 工程实践`,
+      template: `%s · ${seo.siteName}`,
+    },
+    description,
+    keywords: seo.siteKeywords.length ? seo.siteKeywords : undefined,
+    alternates: {
+      canonical: '/',
+      types: { 'application/rss+xml': `${siteUrl}/feed.xml` },
+    },
+    openGraph: {
+      type: 'website',
+      siteName: seo.siteName,
+      locale: 'zh_CN',
+      url: siteUrl,
+      title: seo.siteName,
+      description,
+      images: [{ url: ogImage, width: 1200, height: 630, alt: seo.siteName }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: seo.siteName,
+      description,
+      images: [ogImage],
+    },
     icons: {
       icon: faviconUrl,
       shortcut: faviconUrl,
-      apple: siteLogoUrl,
+      apple: logoUrl,
     },
   };
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const seo = await fetchSeoMeta();
+
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(buildWebsiteJsonLd(seo)) }}
+        />
         <Providers>
           <Layout>{children}</Layout>
         </Providers>

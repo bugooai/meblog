@@ -24,3 +24,23 @@ export const siteSettingsApi = {
     return response.data;
   },
 };
+
+export interface SeoSettings {
+  id: string;
+  site_name: string;
+  site_description: string;
+  site_keywords: string | null;
+  default_og_image_url: string | null;
+}
+
+export const seoSettingsApi = {
+  getSeoSettings: async (): Promise<SeoSettings> => {
+    const response = await api.get<SeoSettings>('/settings/seo');
+    return response.data;
+  },
+
+  updateSeoSettings: async (data: Partial<SeoSettings>): Promise<SeoSettings> => {
+    const response = await api.put<SeoSettings>('/settings/seo', data);
+    return response.data;
+  },
+};

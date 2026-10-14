@@ -2,7 +2,17 @@ import PostDetailClient from './PostDetailClient';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
+import type { AboutData } from '@/api/about';
 import type { PostDetail } from '@/types';
+import {
+  absoluteUrl,
+  authorDisplayName,
+  buildArticleJsonLd,
+  buildBreadcrumbJsonLd,
+  fallbackOgImageUrl,
+  fetchSeoMeta,
+  postImageUrl,
+} from '@/app/lib/seo';
 import { fetchFromServerApi, ServerApiError } from '@/app/lib/server-api';
 
 export const revalidate = 180;
@@ -41,6 +51,14 @@ async function getPostBySlug(slug: string): Promise<PostDetail | null> {
     }
 
     throw error;
+  }
+}
+
+async function getAuthorProfile(): Promise<AboutData | null> {
+  try {
+    return await fetchFromServerApi<AboutData>('/about', { revalidate: 300 });
+  } catch {
+    return null;
   }
 }
 
@@ -94,26 +112,35 @@ export async function generateMetadata({ params }: PostPageProps): Promise<Metad
     };
   }
 
-  const description = post.summary || fallbackDescription(post.content);
-  const image = post.project?.cover;
-  const canonicalUrl = `/post/${post.slug}`;
+  const seo = await fetchSeoMeta();
+  const description = (post.summary || fallbackDescription(post.content)).slice(0, 200);
+  const image = postImageUrl(post, fallbackOgImageUrl(seo)) ?? undefined;
+  const canonicalUrl = absoluteUrl(`/post/${post.slug}`);
+  const authorName = authorDisplayName(await getAuthorProfile(), post.author?.username || seo.siteName);
 
   return {
     title: post.title,
     description,
+    keywords: post.tags.map((tag) => tag.name).join(', ') || undefined,
     alternates: { canonical: canonicalUrl },
     openGraph: {
+      type: 'article',
+      siteName: seo.siteName,
+      locale: 'zh_CN',
       title: post.title,
       description,
-      type: 'article',
       url: canonicalUrl,
-      images: image ? [{ url: image }] : undefined,
+      publishedTime: post.created_at,
+      modifiedTime: post.updated_at || post.created_at,
+      authors: [authorName],
+      tags: post.tags.map((tag) => tag.name),
+      images: image ? [{ url: absoluteUrl(image), width: 1200, height: 630, alt: post.title }] : [],
     },
     twitter: {
       card: image ? 'summary_large_image' : 'summary',
       title: post.title,
       description,
-      images: image ? [image] : undefined,
+      images: image ? [absoluteUrl(image)] : [],
     },
   };
 }
@@ -124,11 +151,28 @@ export default async function PostPage({ params }: PostPageProps) {
   const post = await getPostBySlug(slug);
   const ensuredPost = ensurePostExists(post);
   const likeStatus = await getLikeStatusBySlug(slug);
+  const [seo, about] = await Promise.all([fetchSeoMeta(), getAuthorProfile()]);
+  const authorName = authorDisplayName(about, ensuredPost.author?.username || seo.siteName);
+  const article = buildArticleJsonLd(ensuredPost, seo, authorName);
+  const breadcrumbItems = [
+    { name: '首页', path: '/' },
+    ...(ensuredPost.project ? [{ name: ensuredPost.project.name, path: `/project/${ensuredPost.project.slug}` }] : []),
+    { name: ensuredPost.title, path: `/post/${ensuredPost.slug}` },
+  ];
+
   return (
-    <PostDetailClient
-      initialPost={ensuredPost}
-      initialSlug={slug}
-      initialLikeStatus={likeStatus}
-    />
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify([article, buildBreadcrumbJsonLd(breadcrumbItems)]),
+        }}
+      />
+      <PostDetailClient
+        initialPost={ensuredPost}
+        initialSlug={slug}
+        initialLikeStatus={likeStatus}
+      />
+    </>
   );
 }
