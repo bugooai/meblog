@@ -31,9 +31,13 @@ def _mask(url: str) -> str:
 async def probe() -> tuple[str, str, str]:
     async with engine.connect() as conn:
         if DATABASE_URL.startswith("sqlite"):
-            row = (await conn.execute(text("SELECT sqlite_version(), 'sqlite', 'main'))).fetchone()
+            row = (
+                await conn.execute(text("SELECT sqlite_version(), 'sqlite', 'main'"))
+            ).fetchone()
         else:
-            row = (await conn.execute(text("SELECT version(), current_user, current_database()"))).fetchone()
+            row = (
+                await conn.execute(text("SELECT version(), current_user, current_database()"))
+            ).fetchone()
     return str(row[0]), str(row[1]), str(row[2])
 
 
