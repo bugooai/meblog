@@ -43,6 +43,9 @@ class BaseSettingsConfig(BaseSettings):
     OSS_BUCKET: str = ""
     OSS_PUBLIC_BASE_URL: str = ""
     OSS_SIGN_EXPIRE_SECONDS: int = 3600
+    # Upload size cap enforced while streaming the request body, so an
+    # oversized file cannot exhaust worker memory.
+    MAX_UPLOAD_SIZE_MB: int = 20
 
     class Config:
         case_sensitive = True

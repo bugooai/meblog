@@ -87,6 +87,22 @@ curl -s -X POST http://meblog.bugooai.cn/api/v1/files/upload \
 # 期望 201，返回体里有 oss_url / 签名地址；再用浏览器打开那个地址能出图才算通
 ```
 
+### 上传路径已加固（2026-10-14，`dev`）
+
+配 key 之前先把代码里两个真问题修了，并补了 33 条**不需要密钥就能跑**的测试（`backend/tests/test_file_upload.py`）：
+
+| 问题 | 原来 | 现在 |
+|---|---|---|
+| 大文件直接把内存吃穿 | `await file.read()` 整份读进内存，无上限 | 分块读 + `MAX_UPLOAD_SIZE_MB`（默认 20）卡上限，超限 413，且不会真的往 OSS 传 |
+| `folder` 参数能越界 | `folder` 是调用方自由文本，`../../etc/ssh` 只被 `strip("/")` 处理，点号原样留下 → 对象 key 前缀可以逃出预期目录 | 只保留 `[A-Za-z0-9_-]`，`.`/`..` 段丢掉，反斜杠当分隔符处理，最多 4 层 |
+| 文件名里的路径/怪扩展名 | `ext[:16]` 保留原始大小写和怪字符 | 只取 basename 的后缀，非字母数字剔掉，小写，最长 12 |
+
+另外两条**没改**，只说清现状：
+
+- `GET /api/v1/files/signed-url` 是公开的（匿名可取签名地址），因为前台文章页要给读者渲染封面。它已经挡住越界：`bucket` 不等于 `OSS_BUCKET` 一律 400，非 `oss://` 的 key 也是 400。**含义**：这个 bucket 里不要放任何你不想公开的对象。
+- 图片类型没有白名单（只有 `admin` 能上传，且管理员本来就能往文章里塞任意 HTML，卡扩展名意义不大）。**但**这条和 `backend/app/dao/admin.py:54` 写死 `is_admin=True` 是联动的：一旦你为了开放注册把 `ALLOW_REGISTRATION` 设成 true，上传接口就从「只有你能传」变成「任何人都能传任意文件」，那时必须加白名单。
+
+
 ## 还没解决的（按影响排序）
 
 1. **HTTPS 没上**：`https://meblog.bugooai.cn` 无响应。登录态是 cookie + JWT，明文 HTTP 上跑等于裸奔；而且微信/微博对 http 链接的抓取也不如 https 稳定。域名已经解析到机器上，套一层 certbot 就能解决。
