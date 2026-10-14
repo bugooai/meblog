@@ -880,8 +880,8 @@ npm start             # 启动生产服务器
 **后端 (.env）：**
 ```
 ENV=development
-DATABASE_URL=postgresql://memblog:memblog@116.62.176.216:6001/memblog
-REDIS_URL=redis://116.62.176.216:6379/0
+DATABASE_URL=postgresql://<db-user>:<db-password>@<db-host>:<db-port>/memblog
+REDIS_URL=redis://<redis-host>:6379/0
 SECRET_KEY=your-secret-key-here
 ACCESS_TOKEN_EXPIRE_MINUTES=10080
 ```
@@ -893,7 +893,7 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
 
 **前端 (.env.production)：**
 ```
-NEXT_PUBLIC_API_BASE_URL=http://116.62.176.216:8000/api/v1
+NEXT_PUBLIC_API_BASE_URL=http://<server-host>:8000/api/v1
 ```
 
 ### 11.3 开发规范
