@@ -90,8 +90,9 @@ pnpm dev --port 3000
 | `TEST_DATABASE_URL` | 只跑测试用 | `sqlite:///:memory:` | `APP_ENV=test uv run pytest` 用 |
 | `PROJECT_NAME` `VERSION` `API_V1_STR` `ALGORITHM` | 不用管 | Meblog / 1.0.0 / `/api/v1` / HS256 | |
 
-**代码里根本没读的变量**（`backend/.env.example` 里列了但全是摆设，别浪费时间填）：
-`REDIS_URL`、`ALLOWED_HOSTS`、`DEBUG`。
+**代码里根本没读的变量**（别浪费时间填）：`REDIS_URL`、`ALLOWED_HOSTS`、`DEBUG`。
+`backend/.env.example` 原本把它们当必需项列着，现已挪进「当前代码根本不读取」说明段，并补齐了真正用到的
+`SITE_URL` / `OSS_*` / `BACKEND_CORS_ORIGINS` / `TEST_DATABASE_URL`。
 
 ### 前端 `frontend/.env.local`
 
