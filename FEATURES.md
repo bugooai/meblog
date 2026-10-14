@@ -1153,21 +1153,20 @@ class SearchService:
 
 ### 5.1 开发环境准备
 
+#### 完整说明见 [docs/RUN_LOCALLY.md](RUN_LOCALLY.md)
+
 #### 后端开发
 ```bash
-# 1. 安装依赖
+# 1. 安装依赖（Python 必须 3.12）
 cd backend
-uv sync
+uv sync --python 3.12
 
 # 2. 配置环境变量
-cp .env.example .env.local
-# 编辑 .env.local 配置数据库等
+cp .env.local.example .env.local
+# 编辑 .env.local：本地用默认 SQLite 即可，不配也能起
 
-# 3. 初始化数据库
-uv run python create_tables.py
-
-# 4. 启动开发服务器
-APP_ENV=local uv run uvicorn app.main:app --reload
+# 3. 启动开发服务器（表会在启动时自动创建，不要跑 create_tables.py）
+APP_ENV=local uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 #### 前端开发
@@ -1176,12 +1175,11 @@ APP_ENV=local uv run uvicorn app.main:app --reload
 cd frontend
 pnpm install
 
-# 2. 配置环境变量
-cp .env.example .env.local
-# 编辑 .env.local 配置 API 地址等
+# 2. 配置环境变量（可选，本地有默认值）
+cp .env.local.example .env.local
 
 # 3. 启动开发服务器
-pnpm dev
+pnpm dev --port 3000
 ```
 
 ### 5.2 功能开发流程
