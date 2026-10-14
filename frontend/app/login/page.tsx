@@ -20,7 +20,7 @@ export default function LoginPage() {
       localStorage.setItem('token', data.access_token);
       const user = await authApi.getMe();
       login(data.access_token, user);
-      router.push('/admin');
+      router.push(user.is_admin ? '/admin' : '/');
     },
     onError: (err: any) => {
       setError(err.response?.data?.detail || '登录失败');

@@ -1,6 +1,7 @@
 # Copyright 2026 布谷布谷科技
 # Licensed under the Apache License, Version 2.0
 
+from app.api.admins import router as admins_router
 from app.api.auth import router as auth_router
 from app.api.posts import router as posts_router
 from app.api.project import router as projects_router
@@ -12,6 +13,7 @@ from app.api.comments import router as comments_router
 from app.api.files import router as files_router
 
 __all__ = [
+    "admins_router",
     "auth_router",
     "posts_router",
     "projects_router",

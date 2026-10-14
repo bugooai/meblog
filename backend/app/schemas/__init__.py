@@ -1,4 +1,6 @@
 from app.schemas.admin import (
+    AdminAccountCreate,
+    AdminAccountUpdate,
     AdminCreate,
     AdminLogin,
     AdminResponse,
@@ -18,7 +20,11 @@ from app.schemas.about import AboutResponse, AboutUpdate
 from app.schemas.file_asset import FileAssetResponse
 
 __all__ = [
-    "AdminCreate", "AdminLogin", "AdminResponse",
+    "AdminAccountCreate",
+    "AdminAccountUpdate",
+    "AdminCreate",
+    "AdminLogin",
+    "AdminResponse",
     "Token", "TokenData",
     "ProjectCreate", "ProjectUpdate", "ProjectResponse",
     "TagCreate", "TagUpdate", "TagResponse",
