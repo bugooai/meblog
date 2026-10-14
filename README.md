@@ -28,6 +28,8 @@ A personal tech blog built with Next.js + FastAPI.
 ## Development
 
 本地从零跑起来的完整步骤、环境变量清单和已实测的坑：**[docs/RUN_LOCALLY.md](docs/RUN_LOCALLY.md)**
+
+线上（meblog.bugooai.cn）部署核对、生产环境变量模板和四个待修项：**[docs/DEPLOY.md](docs/DEPLOY.md)**
 （结论：本地一个环境变量都不配也能跑；缺的只是图片上传的 OSS 配置和发文缓存刷新配置。）
 
 ```bash
