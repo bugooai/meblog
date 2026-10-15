@@ -2,6 +2,12 @@
 
 # 部署 meblog 脚本 - 支持 test 和 production 环境
 # 用法: ./deploy.sh [test|production]
+#
+# 用之前先满足三件事，顺序不能反（这台机只有 22 一个入口，见 docs/HARDENING.md 第 4 节）：
+#   1) 专用部署账号建好、仓库目录该账号可写（PROJECT_ROOT 默认值还在 /root 下，见下面注释）；
+#   2) 公钥已进那个账号的 authorized_keys，并且**另开一个终端**用 SERVER_KEY 手工登进去过一次；
+#   3) 上面两条都过了，才可以把 sshd 的 PasswordAuthentication 关掉。
+# 这个脚本用 BatchMode=yes：它永远不会退回口令输入，密钥没配好就是立刻失败，不是卡住。
 
 set -e
 
@@ -20,16 +26,46 @@ fi
 # 而这台机的 root 口令已经因为被贴进工单正文泄露过一次（见 docs/HARDENING.md 第 4 节）。
 # SERVER_USER 建议用专用部署账号而不是 root（配套要改 sshd 的 PermitRootLogin）。
 : "${SERVER_KEY:?Please export SERVER_KEY=/path/to/deploy_key}"
+# 换非 root 部署账号时 PROJECT_ROOT 必须跟着换：/root/code/... 别的账号进不去，
+# 脚本会在 cd 那一步直接失败。要么用 root，要么迁到 /home/<部署账号>/code/projects/meblog。
 : "${PROJECT_ROOT:=/root/code/projects/meblog}"
+# 本机仓库路径（步骤 1 推送用），和远端 PROJECT_ROOT 是两个不同的东西，别混。
+: "${LOCAL_REPO:=$HOME/code/projects/meblog}"
+# 每个环境拉哪条分支：测试跟 dev，生产跟 main。想临时改口径就 export DEPLOY_BRANCH。
+# 以前这个脚本无论 test 还是 production 都 pull dev —— 等于生产可以直接跑没发版的代码，
+# 和 docs/DEPLOY.md 的发版口径（服务器上 checkout main + merge --ff-only origin/main）互相打脸。
+# 注意 test 和 production 共用同一个工作副本（PROJECT_ROOT 只有一个），切分支会改工作区；
+# 容器跑的是各自 --build 那一刻的代码，不会串，但 backend/.env.* 这类未跟踪文件是两边共享的。
+if [ "$ENVIRONMENT" = "test" ]; then
+  BRANCH="${DEPLOY_BRANCH:-dev}"
+else
+  BRANCH="${DEPLOY_BRANCH:-main}"
+fi
+# 后端在宿主机上暴露的端口：健康检查要打到这个，不是容器内部的 8000。
+# 写死 8000 的后果：生产部署时探的是测试环境的后端，测试在跑就永远「健康检查通过」。
+if [ "$ENVIRONMENT" = "test" ]; then
+  BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-8000}"
+else
+  BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-9000}"
+fi
 
 echo "=== 部署 meblog 到 $ENVIRONMENT 环境 ==="
 
 # 1. 推送到 GitHub。代理只绑在 github.com 这一个 URL scope 上，不再全局开/关系统代理 ——
 #    全局代理会把 npm / pypi / 国内站点一起拐走，还容易用完忘了关。直连优先、网络类失败自动
 #    走代理重试一次的逻辑都在 scripts/git-sync.sh 里，它不写任何 git config，用完零残留。
-echo "1. 推送到 GitHub..."
-cd ~/code/projects/meblog
-scripts/git-sync.sh push origin dev
+#    代理候选默认是 host.docker.internal:7897 / 192.168.65.254:7897（Docker Desktop 里才成立），
+#    换台机器跑就 export GIT_SYNC_PROXY_CANDIDATES="http://127.0.0.1:7897"。
+echo "1. 推送 $BRANCH 到 GitHub..."
+cd "$LOCAL_REPO"
+# 推的是本地那条同名分支的当前头。部署 production 之前先确认本地 main 就是你要发的内容，
+# 不是的话这里会把一个没发版的状态直接推上去。
+if ! HEAD_SHA="$(git rev-parse --short --verify "$BRANCH" 2>/dev/null)"; then
+  echo "本地没有 $BRANCH 这条分支（或还没有提交），先把分支建出来再部署。"
+  exit 1
+fi
+echo "   分支头：$HEAD_SHA  $(git log -1 --format='%s' "$BRANCH")"
+scripts/git-sync.sh push origin "$BRANCH"
 
 # 2. 在服务器上部署（访问阿里云一律直连，不走代理）
 echo "2. 在服务器上部署 $ENVIRONMENT 服务..."
@@ -43,10 +79,12 @@ ssh -i "$SERVER_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$SERV
   # 克隆或更新项目
   if [ ! -d \"\$PROJECT_NAME\" ]; then
     # remote 地址里不要嵌凭据：明文落在 .git/config 里，谁能读那个文件谁就能拿走它
-    # （服务器上现在那份 gitee origin 就是这个样子，见 docs/HARDENING.md 第 5 节）
-    git clone https://github.com/bugooai/meblog.git \"\$PROJECT_NAME\"
+    # （服务器上那份 origin 是不是这样，得在机器上确认，见 docs/HARDENING.md 第 5 节）
+    git clone --branch \"$BRANCH\" https://github.com/bugooai/meblog.git \"\$PROJECT_NAME\"
   else
-    cd \"\$PROJECT_NAME\" && git reset --hard HEAD && git pull origin dev
+    # fetch + reset 到远端分支头，比 reset --hard HEAD + pull 少一个歧义：
+    # reset --hard HEAD 只丢工作区改动，分支真落后了也看不出来；pull 遇到分叉会自己造 merge commit。
+    cd \"\$PROJECT_NAME\" && git fetch origin \"$BRANCH\" && git checkout \"$BRANCH\" && git reset --hard \"origin/$BRANCH\"
   fi
   
   cd \"\$PROJECT_NAME\"
@@ -71,12 +109,12 @@ ssh -i "$SERVER_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$SERV
   # 后端健康检查，成功后再部署前端
   echo '等待后端健康检查通过...'
   for i in \$(seq 1 20); do
-    if curl -fsS http://localhost:8000/health >/dev/null; then
+    if curl -fsS http://127.0.0.1:$BACKEND_HOST_PORT/health >/dev/null; then
       echo '后端健康检查通过'
       break
     fi
     if [ \$i -eq 20 ]; then
-      echo '后端健康检查失败，部署终止'
+      echo '后端健康检查失败（http://127.0.0.1:$BACKEND_HOST_PORT/health），部署终止'
       exit 1
     fi
     sleep 3
