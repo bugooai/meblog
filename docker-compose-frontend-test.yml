@@ -21,7 +21,7 @@ services:
       - NEXT_PUBLIC_ENV=${NEXT_PUBLIC_ENV:-test}
       # 和生产同一套：运行时的站点地址、取数地址、刷新密钥都得进容器。
       # 留空是允许的 —— 空值等于没配，前端会走 app/lib/server-api.ts 里按
-      # NEXT_PUBLIC_ENV=test 挑的默认地址（http://memblog-backend:8000/api/v1）。
+      # NEXT_PUBLIC_ENV=test 挑的默认地址（http://meblog-backend:8000/api/v1）。
       - SITE_URL=${SITE_URL:-}
       - NEXT_PUBLIC_SITE_URL=${SITE_URL:-}
       - SERVER_API_BASE_URL=${SERVER_API_BASE_URL:-}

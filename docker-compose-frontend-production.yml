@@ -28,7 +28,7 @@ services:
       - SITE_URL=${SITE_URL:-}
       - NEXT_PUBLIC_SITE_URL=${SITE_URL:-}
       # Next 服务端取数走容器间地址，别绕出容器再穿 nginx。
-      - SERVER_API_BASE_URL=${SERVER_API_BASE_URL:-http://memblog-backend-prod:8000/api/v1}
+      - SERVER_API_BASE_URL=${SERVER_API_BASE_URL:-http://meblog-backend-prod:8000/api/v1}
       # 发文后即时刷新首页缓存用；必须等于后端 .env.production 的 FRONTEND_REVALIDATE_TOKEN。
       # 留空 = 该接口一律 401，首页最长 180 秒后才更新。
       - REVALIDATE_SECRET=${REVALIDATE_SECRET:-}

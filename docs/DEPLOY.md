@@ -99,11 +99,11 @@ POST http://meblog.bugooai.cn/api/internal/revalidate
 所以后端的通知地址必须写**容器间地址**，绕开 nginx：
 
 ```
-FRONTEND_REVALIDATE_URL=http://memblog-frontend-prod:3000/api/internal/revalidate
+FRONTEND_REVALIDATE_URL=http://meblog-frontend-prod:3000/api/internal/revalidate
 FRONTEND_REVALIDATE_TOKEN=<等于前端 REVALIDATE_SECRET>
 ```
 
-容器名来自 `docker-compose-*-production.yml`（`memblog-backend-prod` / `memblog-frontend-prod`，都在 external 网络 `common-network` 上）。前端生产映射是 `9001:3000`，后端是 `9000:8000`，容器内部仍听 3000 / 8000。
+容器名来自 `docker-compose-*-production.yml`（`meblog-backend-prod` / `meblog-frontend-prod`，都在 external 网络 `common-network` 上）。前端生产映射是 `9001:3000`，后端是 `9000:8000`，容器内部仍听 3000 / 8000。
 
 ## 配完怎么验（对着线上跑，四条全绿才算好）
 

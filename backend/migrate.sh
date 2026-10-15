@@ -6,7 +6,7 @@ set -e
 
 MIGRATION_DIR="migrations/sql"
 # 不再内置默认口令：必须由环境变量显式给出
-DATABASE_URL="${DATABASE_URL:?Set DATABASE_URL before running migrations, e.g. postgresql://<user>:<password>@<host>:5432/memblog}"
+DATABASE_URL="${DATABASE_URL:?Set DATABASE_URL before running migrations, e.g. postgresql://<user>:<password>@<host>:5432/meblog}"
 
 if [ $# -eq 0 ]; then
     echo "Usage: $0 [migration_name]"
