@@ -336,6 +336,7 @@ git config --global --unset "http.https://github.com.proxy"    # 撤销
 - 「用完立马切回本地」在这套写法下**不需要人工做**：代理只以 `-c http.https://github.com.proxy=...` 注入当次命令，`git config` 一个字都没写。实测切完之后 `git config --global --get-regexp proxy` = **0 条**，`env` 里 `*_proxy` = **0 条**。
 - 但**谷歌本身不需要走代理**：同一时刻 `https://www.google.com/generate_204` 直连 **204 / 0.48s**，走代理 204 / 0.64s。要代理的从来只是 github 那一段（而且今天 github 直连更快，见下表）。
 - 出口确实换了：同一个容器里分别用 `https://api.ipify.org` 取直连出口和走 `7897` 的出口，**两个 IP 不同**（具体数字不写进这个公开仓库 —— 那是用户本机的宽带公网出口 IP，留在 CMP-3/CMP-4 的内部评论里即可）。所以「切到代理」是真的换了路径，不是自我安慰。
+- **已定，别再重谈**（布谷 15:09，卡片 `be46fd96` 选「不用重写」）：那行真实出口 IP 仍留在 `dev` 的 git 历史对象里，**不 force-push、不重写历史**。此后写文档的规则固定为：**任何真实出口 IP / 节点 IP / 用户名都不进这个公开仓库**，需要证据就写「直连出口与代理出口是两个不同 IP」，具体数字只留在 Paperclip 的内部评论里。
 
 ### 复测数据（同机同刻，单位秒）
 
