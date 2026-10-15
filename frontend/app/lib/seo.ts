@@ -159,7 +159,7 @@ export async function buildArticleJsonLd(
     datePublished: post.created_at,
     dateModified: post.updated_at || post.created_at,
     inLanguage: 'zh-CN',
-    author: { '@type': 'Person', name: authorName, url: absoluteUrl('/about') },
+    author: { '@type': 'Person', '@id': authorEntityId(), name: authorName, url: absoluteUrl('/about') },
     publisher: {
       '@type': 'Organization',
       name: meta.siteName,
@@ -189,4 +189,31 @@ export function buildBreadcrumbJsonLd(
 
 export function authorDisplayName(about: AboutData | null, fallback: string): string {
   return about?.username?.trim() || fallback;
+}
+
+// 作者实体在同一站点内应该有稳定 @id：文章页的 BlogPosting.author 和 /about 的
+// Person 指向同一个节点，Google 才能把「谁写的」和「作者页」合成一个实体。
+// 单作者博客里这是最有价值的信号，之前 /about 只在文章页被引用，自己没有 Person。
+export function authorEntityId(): string {
+  return `${absoluteUrl('/about')}#author`;
+}
+
+export function buildAuthorJsonLd(about: AboutData | null, meta: SeoMeta): Record<string, unknown> {
+  const name = authorDisplayName(about, meta.siteName);
+  const sameAs = [about?.github_url, about?.zhihu_url, about?.twitter_url].filter(
+    (item): item is string => Boolean(item && item.trim())
+  );
+  const rawImage = about?.avatar_url || meta.siteLogoUrl;
+  const image = rawImage && !rawImage.startsWith('oss://') ? absoluteUrl(rawImage) : undefined;
+
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Person',
+    '@id': authorEntityId(),
+    name,
+    url: absoluteUrl('/about'),
+    description: about?.bio?.trim() || meta.siteDescription,
+    ...(image ? { image } : {}),
+    ...(sameAs.length > 0 ? { sameAs } : {}),
+  };
 }
