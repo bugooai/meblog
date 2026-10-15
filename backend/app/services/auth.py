@@ -12,10 +12,11 @@ from app.schemas import (
     AdminCreate,
     AdminResponse,
     AuthStatusResponse,
+    PasswordChangeRequest,
     Token,
 )
 from app.dao import AdminDao
-from app.utils.security import verify_password, create_access_token
+from app.utils.security import verify_password, create_access_token, get_password_hash
 from app.utils.logger import logger
 from configs import settings
 
@@ -102,6 +103,38 @@ class AuthService:
         except Exception as e:
             logger.error(f"Error during login for {form_data.username}: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+
+    @staticmethod
+    async def change_password(
+        db: AsyncSession, current_user: Admin, payload: PasswordChangeRequest
+    ) -> dict:
+        """改自己的登录口令：先验旧口令，再写新哈希。
+
+        2026-10-16 的取舍，写清楚免得以后当成 bug 修：改完之后**已经签发的 JWT
+        仍然有效，直到自然过期**（`ACCESS_TOKEN_EXPIRE_MINUTES`，默认 7 天）。
+        token 里只有一个 `sub`，没有口令版本号（`pwd_version` / `pwd_changed_at`
+        这类声明），所以 `get_current_user` 分不出「这枚 token 是改口令之前还是
+        之后签的」。想让改口令立刻踢掉所有会话，得给 token 加版本声明并在解码时
+        比对 —— 那是另一件事，不要在这里假装改口令等于全端登出。
+        """
+        if not verify_password(payload.old_password, current_user.password_hash):
+            logger.warning(
+                f"Password change rejected for {current_user.username}: old password mismatch"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect password",
+            )
+        if payload.old_password == payload.new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must differ from the current one",
+            )
+
+        current_user.password_hash = get_password_hash(payload.new_password)
+        await db.commit()
+        logger.info(f"Password changed for {current_user.username}")
+        return {"detail": "Password updated"}
 
     @staticmethod
     async def get_me(current_user: Optional[AdminResponse]) -> AdminResponse:

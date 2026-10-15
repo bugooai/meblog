@@ -61,3 +61,14 @@ class AdminAccountCreate(BaseModel):
 
 class AdminAccountUpdate(BaseModel):
     is_admin: bool
+
+
+class PasswordChangeRequest(BaseModel):
+    """登录后自助改口令（`POST /auth/change-password`）。
+
+    `new_password` 沿用建号时的 `min_length=8`（见 `AdminCreate`）—— 两处必须同口径，
+    否则会出现「建号时合格的口令改不进去」。
+    """
+
+    old_password: str
+    new_password: str = Field(..., min_length=8)

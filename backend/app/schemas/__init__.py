@@ -5,6 +5,7 @@ from app.schemas.admin import (
     AdminLogin,
     AdminResponse,
     AuthStatusResponse,
+    PasswordChangeRequest,
     Token,
     TokenData,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "AdminLogin",
     "AdminResponse",
     "AuthStatusResponse",
+    "PasswordChangeRequest",
     "Token", "TokenData",
     "ProjectCreate", "ProjectUpdate", "ProjectResponse",
     "TagCreate", "TagUpdate", "TagResponse",

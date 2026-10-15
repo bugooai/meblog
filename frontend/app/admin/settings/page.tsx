@@ -27,6 +27,14 @@ export default function AdminSettingsPage() {
           </Link>
 
           <Link
+            href="/admin/settings/password"
+            className="bg-[var(--color-background)] rounded-[12px] shadow-[var(--shadow-card)] p-6 hover:shadow-[var(--shadow-card-hover)] transition-all border border-[var(--color-border)]"
+          >
+            <h2 className="text-xl font-semibold text-rose-500 mb-2">登录口令</h2>
+            <p className="text-[var(--color-foreground-secondary)]">用旧口令验证后改自己的登录口令。</p>
+          </Link>
+
+          <Link
             href="/admin/settings/author"
             className="bg-[var(--color-background)] rounded-[12px] shadow-[var(--shadow-card)] p-6 hover:shadow-[var(--shadow-card-hover)] transition-all border border-[var(--color-border)]"
           >

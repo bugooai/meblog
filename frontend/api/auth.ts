@@ -17,6 +17,11 @@ export interface RegisterData {
   password: string;
 }
 
+export interface PasswordChangeData {
+  old_password: string;
+  new_password: string;
+}
+
 export const authApi = {
   login: async (data: LoginData): Promise<Token> => {
     const formData = new FormData();
@@ -36,5 +41,10 @@ export const authApi = {
   getMe: async (): Promise<User> => {
     const response = await api.get<User>('/auth/me');
     return response.data;
+  },
+
+  // 改的是自己这一行的 password_hash。口令只走 POST body，不进 URL/query。
+  changePassword: async (data: PasswordChangeData): Promise<void> => {
+    await api.post('/auth/change-password', data);
   },
 };
