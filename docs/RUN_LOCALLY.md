@@ -184,3 +184,46 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 ```
 
 外部控制器（`9090`）默认只监听 Windows 的 `127.0.0.1`，容器 `host.docker.internal:9090` 会直接被拒。想让容器里的 agent 查延迟/切节点，需要在 Clash 里打开「允许局域网连接」（`allow-lan: true`）；不开的话只有 git 这条路能用。
+
+## 9. 代理白名单：实测枚举（2026-10-15）
+
+### 先更正第 8 节末尾那句话
+
+「开 `allow-lan` 就能让容器访问控制器」——**不完全对，实测过**。今天开了局域网连接之后：
+
+| 端口 | 用途 | 从容器连 `192.168.65.254` |
+|---|---|---|
+| `7897` | mixed 代理（git 走这里） | **OPEN** |
+| `9090` | 外部控制器（查节点/切节点） | **Connection refused** |
+
+`allow-lan` 放开的是代理监听口。控制器是否跟着放开取决于 `external-controller` 绑的地址：写成 `127.0.0.1:9090` 就永远只在本机回环上。要让容器里的网管能查延迟/切节点，得把它改成 `0.0.0.0:9090`（或 `:9090`），**并且同时设 `secret`** —— 否则同一局域网内任何设备都能改你的路由。不设 secret 就别开。
+
+### 该走代理的域名（枚举，不是通配）
+
+只有这些**出过直连失败**，且失败的是「按天抖」：
+
+| 域名 | 为什么进白名单 |
+|---|---|
+| `github.com` | 10-14 直连 TCP 超时 21s×3，git push 因此失败；今天直连 200/1.1s |
+| `raw.githubusercontent.com` | 今天直连抖了一次 `000`（6s 超时），重试即恢复 |
+| `codeload.github.com` | 随 `git clone`/release 下载一起抖 |
+| `objects.githubusercontent.com` | release/LFS 资源，同上 |
+| `api.github.com` | 一直没失败过，留着是因为它和上面同一条链路 |
+| `registry.npmjs.org` | 今天走代理抖了一次 `000`；直连一直稳 |
+
+### 明确**不要**进白名单的（代理只会拖慢）
+
+同一台机同一时刻测的，直连 vs 走代理：
+
+| 目标 | 直连 | 走 `7897` | 结论 |
+|---|---|---|---|
+| `bugoo-ai-dev.oss-cn-hangzhou.aliyuncs.com` | 0.31s | 1.94s | 慢 6.2 倍，别代理 |
+| `meblog.bugooai.cn`（你自己的站） | 0.29s | 2.42s | 慢 8.3 倍，别代理 |
+| `www.baidu.com` | 0.20s | 1.66s | 慢 8.3 倍，别代理 |
+| `pypi.org` | 1.05s | 2.17s | 慢 2 倍，别代理 |
+
+10-14 那次 `pypi.org` 两条路都不通是**当天的抖动**，今天 3 轮 8 个目标 48 次请求全部成功（`uv` 因此现在可用）。所以别把「昨天不通」写成永久规则 —— 白名单要跟着实测走。
+
+### 结论写法
+
+`git config --global http.https://github.com.proxy ...` 这种**按主机**的配置就是这里要的形态：只有 github.com 走代理，npm/国内站点照常。它不需要「用完切回来」，因为它本来就没切走别的流量。真要覆盖 `raw.githubusercontent.com` 之类，就为每个主机各写一条 `http.<url>.proxy`，别用 `http.proxy` 全局值。
