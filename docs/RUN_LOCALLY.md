@@ -166,7 +166,7 @@ Invoke-RestMethod http://127.0.0.1:3000/api/v1/posts
 | 哪一侧 | 是什么 | 代理地址写哪个 | 谁负责 | 现在的状态 |
 |---|---|---|---|---|
 | **容器侧** | 网管（AI agent）干活的那个小程序盒，跑在你电脑上，但不是你的桌面 | `http://host.docker.internal:7897`（需要 Clash 开着「允许局域网连接」） | 网管 | **已经固化好**：`scripts/git-sync.sh` 先试直连，连不上自动走代理，用完什么都不留。10-15 一天 5 次真实推送全自动完成，没人手动切过 |
-| **你本机** | 你自己在 PowerShell 里 `git clone` / `git push` 的时候 | `http://127.0.0.1:7897`（就是你 Clash 的 mixed 端口） | 布谷 | 配方已写好（第 9 节 A/B/C），**只差实机跑一次贴回输出** |
+| **你本机** | 你自己在 PowerShell 里 `git clone` / `git push` 的时候 | `http://127.0.0.1:7897`（就是你 Clash 的 mixed 端口） | 布谷 | 配方已写好并用真 PowerShell 自测过（第 9 节 A/B/C + 自测记录）。布谷 15:33 说「你测就好了」—— **不再要求他在本机跑**；仍未覆盖的边界见第 9 节「自测与边界」 |
 
 两边共用的两条硬规矩：**别用全局 `http.proxy`**（会把 npm、阿里云 OSS、你自己的站一起拖进代理，它们走代理慢 2–9 倍）；**`api.github.com` 永远别走代理**（GitHub 会按出口 IP 随机回 403，直接打断认证/上传）。
 
@@ -189,7 +189,7 @@ Invoke-RestMethod http://127.0.0.1:3000/api/v1/posts
 ```powershell
 # 反例 1：写全局配置。虽然也只影响 github.com 一个主机，但它会留一行残留，
 # 得记得手动 --unset 才干净；这就是第 9 节 C 段，只有你真想常驻时才用
-git config --global http.https://github.com.proxy http://127.0.0.1:7897
+git config --global http.https://github.com/.proxy http://127.0.0.1:7897
 ```
 
 ```bash
@@ -201,7 +201,7 @@ git config remote.origin.proxy http://host.docker.internal:7897
 端口以你 Clash 的 mixed 端口为准（这里是 7897；常见默认还有 7890）。你本机要验证就两条，一条看能不能出 SHA，一条看有没有留残留：
 
 ```powershell
-git -c "http.https://github.com.proxy=http://127.0.0.1:7897" ls-remote https://github.com/bugooai/meblog HEAD
+git -c "http.https://github.com/.proxy=http://127.0.0.1:7897" ls-remote https://github.com/bugooai/meblog HEAD
 #   ^ 应该出一行 SHA + HEAD
 
 git config --global --get-regexp proxy
@@ -265,10 +265,12 @@ curl.exe -s -o NUL -w "%{http_code} %{time_total}\n" https://www.baidu.com
 
 ### 结论写法
 
-`http.https://github.com.proxy` 这种**按主机**的写法是这里要的形态（`git -c` 一次性注入 或 `git config --global` 常驻都可以）。三条实测边界：
+`http.https://github.com/.proxy` 这种**按主机**的写法是这里要的形态（`git -c` 一次性注入 或 `git config --global` 常驻都可以）。四条实测边界：
 
 - **只有 `github.com` 进代理，`api.github.com` 绝不进**；npm / pypi / 国内站点照常直连。常驻写法不需要「用完切回」，因为它本来就没切走别的流量；要「用完就没了」就用一次性 `-c`，实测 `git config --global --get-regexp proxy` 与 `env` 里 `*_proxy` 都是 0 条。
 - **别用光秃的 scope**：`-c http.https://.proxy=<url>`（只写 scheme）实测**完全不生效** —— git 没走代理，报的是连 `github.com` 失败而不是连代理失败。所以按主机写不是风格问题，是能不能生效的问题。
+- **`github.com.proxy` 与 `github.com/.proxy` 两种写法实测等价，且都不会误伤近似域名**：15:4x 用死代理口 `127.0.0.1:1` 做判别，两种 scope 下 `https://github.com.evil.example/` 与 `https://github.comoverture.example/` 全部报 `Could not resolve host`（说明没被拖进代理），而真 `github.com` 会报「连不上 127.0.0.1」（说明代理确实生效）。git 的 URL scope 匹配要求落在路径边界上，所以不用为了安全刻意补尾斜杠 —— 但全文统一用带尾斜杠的那种，省得读者以为是两件事。
+
 - **别用全局 `http.proxy`**：它会把 `api.github.com`、npm、OSS 一起拖进代理。实测 `-c http.proxy=http://127.0.0.1:1` 会让 `api.github.com` 变成「连不上 127.0.0.1」；再加上 `-c http.https://api.github.com.proxy=` 就恢复成 GitHub 自己的响应（当时是 403，15:04 复测是 200 —— 关键是**请求真的出到 GitHub 了，没被代理劫持**）。这就是脚本那条保险的原理。
 
 ### 容器侧固化：`scripts/git-sync.sh`（直连优先，失败自动走代理）
@@ -315,19 +317,38 @@ scripts/git-sync.sh probe          # 只测连通性，不动仓库
 **A. 一次性走代理拉一次 github（先跑这条取证）**：（第 8 节末尾那两条是它的最短形式，去掉保险也能用；这里带保险是防你本机已经有全局代理。）
 
 ```powershell
-git -c "http.https://api.github.com.proxy=" -c "http.https://github.com.proxy=http://127.0.0.1:7897" ls-remote https://github.com/bugooai/meblog HEAD
+git -c "http.https://api.github.com.proxy=" -c "http.https://github.com/.proxy=http://127.0.0.1:7897" ls-remote https://github.com/bugooai/meblog HEAD
 git config --global --get-regexp proxy    # 验证零残留：这条应该没有输出
 ```
 
-**B. 直连优先 + 失败自动走代理**（和容器侧同一条规则，写进 `$PROFILE`，长期不用管，同样零残留）：
+**B. 直连优先 + 失败自动走代理**（和容器侧同一条规则，写进 `$PROFILE`，长期不用管，同样零残留）。同一个函数也进了仓库文件 `scripts/git-sync.ps1`（只是把代理口换成 `$env:GIT_SYNC_PROXY` 可覆盖），点源引入即可，不用手抄：`. .\scripts\git-sync.ps1`
 
 ```powershell
 function git-sync {
   param([Parameter(ValueFromRemainingArguments = $true)]$GitArgs)
-  git -c "http.https://api.github.com.proxy=" @GitArgs
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "[git-sync] 直连失败(rc=$LASTEXITCODE)，改用 Clash 代理重试一次；api.github.com 仍强制直连"
-    git -c "http.https://api.github.com.proxy=" -c "http.https://github.com.proxy=http://127.0.0.1:7897" @GitArgs
+  $guard = @('-c', 'http.https://api.github.com.proxy=')
+  $proxy = @('-c', 'http.https://github.com/.proxy=http://127.0.0.1:7897')
+  $netpat = 'Failed to connect|Could not resolve host|Connection refused|timed out|Connection reset|Empty reply|encountered end of file|Recv failure|Send failure|remote end hung up|SSL_read|unable to access|returned error: 5\d\d'
+  $log = [System.IO.Path]::GetTempFileName()
+  $savedPrompt = $env:GIT_TERMINAL_PROMPT
+  $env:GIT_TERMINAL_PROMPT = '0'      # 不弹凭据框挂住，否则永远走不到重试那步
+  try {
+    & git @guard @GitArgs 2>$log              # 第 1 步：直连
+    if ($LASTEXITCODE -eq 0) { return }
+    $err = Get-Content -Raw -ErrorAction SilentlyContinue $log
+    if ($err -notmatch $netpat) {             # 非网络错误：原样冒泡，不重试不掩盖
+      Write-Host "[git-sync] 直连失败且不是网络类错误，不试代理（rc=$LASTEXITCODE）"
+      if ($err) { Write-Host $err }
+      return
+    }
+    Write-Host '[git-sync] 直连网络类失败，改用 Clash 代理重试一次（api.github.com 仍强制直连）'
+    & git @guard @proxy @GitArgs 2>$log
+    $err2 = Get-Content -Raw -ErrorAction SilentlyContinue $log
+    if ($err2) { Write-Host $err2 }
+  } finally {
+    Remove-Item $log -ErrorAction SilentlyContinue
+    if ($null -ne $savedPrompt) { $env:GIT_TERMINAL_PROMPT = $savedPrompt }
+    else { Remove-Item 'Env:GIT_TERMINAL_PROMPT' -ErrorAction SilentlyContinue }
   }
 }
 ```
@@ -338,16 +359,48 @@ function git-sync {
 git-sync ls-remote https://github.com/bugooai/meblog HEAD    # 应该第 1 步直连就出 SHA
 ```
 
+**上面这版不是抄容器脚本的语法，是抄它的语义**：只有网络类失败才换路，`Repository not found` / `non-fast-forward` 一律原样冒泡 —— 这一条是 15:4x 用真 PowerShell 跑出来的，旧版当时会重试，见下一小节。
+
 `api.github.com.proxy=` 那个空值不是凑数的：实测它能把该主机从全局 `http.proxy` 里摘出来（不加它，全局死代理会让 `api.github.com` 变成「连不上代理」；加上就是 GitHub 自己的响应）。原因见第 9 节 —— `api.github.com` 走代理会**随机 403**（14:51 连续 403，15:04 又五连 200），不能和 `github.com` 同档处理。
 
 **C. 只有你确实想常驻时才写配置**（只影响 `github.com` 这一个主机，不影响别的流量，但 `git config` 里会留一行）：
 
 ```powershell
-git config --global "http.https://github.com.proxy" "http://127.0.0.1:7897"
-git config --global --unset "http.https://github.com.proxy"    # 撤销
+git config --global "http.https://github.com/.proxy" "http://127.0.0.1:7897"
+git config --global --unset "http.https://github.com/.proxy"    # 撤销
 ```
 
-> 诚实边界：网管的 cwd 在容器里，够不到这台 Windows 的文件系统，**上面三段 PowerShell 没有在实机执行过**。等价的 bash 逻辑（直连优先 / 代理重试 / 失败不静默 / `api.github.com` 摘出代理）已按上面两节实测。请把 **A 的 SHA** 和 **A 第二条（`--get-regexp proxy`）应无输出**这两份真实结果贴回 [CMP-4](/cmp/issues/CMP-4)，作为 Windows 侧证据；跑过 B 的话把 `git-sync ls-remote` 的输出一起贴上。
+> 诚实边界（15:33 之后重写）：布谷答「你测就好了」，所以**这一段不再向他索取任何本机输出**。我在容器里装了 pwsh 7.4.6 把配方真跑了一遍（下一小节），能自动验证的都验了；剩下没覆盖的只有「Windows 这个平台的 argv 编组 + 他那台机的 git/Clash 实况」，已在下一小节逐条写明。
+
+### Windows 配方的自测，以及仍然没覆盖的那部分（2026-10-15 15:41–15:43 UTC）
+
+布谷 15:33 答「你测就好了」，意思是取证不该再推给他。容器里没有任何执行器能落到他那台 Windows（`GET /api/companies/…/agents` 只有 `网管`/`得得` 两个 `codex_local`，都在容器里），所以我做的是：**在容器里装真 PowerShell**（`powershell-7.4.6-linux-x64.tar.gz`，71,645,796 字节，直连下载跑满、代理那条 300s 只到 34MB —— 顺带又是「直连优先」赢一次），用 `dotnet` 的 invariant globalization 起 `pwsh`，让配方在真解析器 + 真命令流上跑。
+
+自测方法：把 `git` 换成一个只打印 argv / 退出码的假脚本（`FAKE_GIT_MODE` 控制它模拟「直连通 / 网络类失败 / 仓库不存在 / push 冲突」），断言**调用次数**和**每一条 `-c` 参数到底原样到了什么**。真实结果（**19 条断言全过，0 FAIL**；被测的那段函数是从 `docs/RUN_LOCALLY.md` 里抽出来的原文，不是我另抄一份 —— 抽出来与实测版本逐字一致）：
+
+| 断言 | 结果 |
+|---|---|
+| 文档里 12 个 PowerShell 围栏代码块过真 PowerShell 解析器 | **0 语法错误** |
+| T1 直连通：只调 1 次、不注入代理、`-c http.https://api.github.com.proxy=` 连结尾等号都完整到达 | PASS |
+| T2 直连网络类失败：重试**恰好一次**，第二条命令带上 `http.https://github.com/.proxy=http://127.0.0.1:7897`，参数顺序 guard→proxy→业务参数 | PASS |
+| T3 `Repository not found`（rc=128）：**不试代理**，原样冒泡 | PASS（**旧版 FAIL：调用 2 次并注入代理**） |
+| T4 `non-fast-forward`（rc=1）：**不试代理**，原样冒泡 | PASS（**旧版 FAIL：同样重试并注入代理**） |
+| T5 两条路都失败：非零退出（rc=128），不静默 | PASS |
+| T6 零残留：干净会话里跑完不留下 `GIT_TERMINAL_PROMPT`；真 `git config --global --get-regexp proxy` → `rc=1` 空输出 | PASS |
+| T7 不走假 git、用真 `git` 判别 scope：`-c http.https://github.com/.proxy=http://127.0.0.1:1` → `Failed to connect to 127.0.0.1`（证明这条 key 真的生效，不是被 git 忽略） | PASS |
+| 端到端：`git-sync ls-remote https://github.com/bugooai/meblog HEAD` 走真 git 真网络 | `2f34820c472ddfa6fa5b1b7f56b61b792879ebe6\tHEAD`，第 1 步直连就过 |
+
+第一版 harness 有两条断言本身写错了（把「复原回进函数前的值」断成「必须为空」，又忘了在调 `git config` 前把假 git 从 PATH 摘掉），当时报 2 FAIL；**修正断言后复跑才是上面这份 19/19**，代码没为这两条改过一行 —— 错的是我的测法，不是配方。
+
+**自测的价值就在这两条 FAIL 上**：旧版 B 只看语法完全正常，但它把「仓库不存在」「push 冲突」也当网络故障走代理 —— 正是容器脚本明令禁止的「把真实错误伪装成网络问题」。另外旧版没有 `GIT_TERMINAL_PROMPT=0` 防护，Windows 上第一次尝试撞上凭据提示会挂住，`if ($LASTEXITCODE -ne 0)` 那行永远执行不到。两处都已修进上面那段配方。
+
+文档里这段和 `scripts/git-sync.ps1` **两份都各自跑过上面 19 条断言**（后者只有代理口那一行改成读 `$env:GIT_SYNC_PROXY`，其余逐字相同），都是 0 FAIL。
+
+**仍然没覆盖的（别再当成已验证）**：
+
+1. **平台差异**：Linux 上的 pwsh 直接把 argv 交给子进程；Windows 上还要过一层 C 运行时的引号编组，而且 Windows PowerShell 5.1 没有 `$PSNativeCommandArgumentPassing`（这里测出来是 `Standard`）。含 `=`、`:`、`//` 的单个 token 按理安全，但**没在 Windows 上验证过**。
+2. **那台机本身**：他的 git 版本、Clash 的 7897 是否开着、GCM 弹什么窗、真实网络出口 —— 我够不到，也不该猜。
+3. 所以交付 3 的验收口径改成：**「配方已在真 PowerShell 上自测到容器边界，Windows 平台层与用户本机实况未实测」**，按布谷的决定就此收口，不再向他索取输出。哪天他自己撞上报错，把那一句报错贴回来即可（那是新的证据，不是欠账）。
 
 ### 查延迟 / 切节点：现在做不到（如实记录，不含糊）
 
@@ -365,7 +418,7 @@ git config --global --unset "http.https://github.com.proxy"    # 撤销
 
 ### 先说结论
 
-- 「用完立马切回本地」在这套写法下**不需要人工做**：代理只以 `-c http.https://github.com.proxy=...` 注入当次命令，`git config` 一个字都没写。实测切完之后 `git config --global --get-regexp proxy` = **0 条**，`env` 里 `*_proxy` = **0 条**。
+- 「用完立马切回本地」在这套写法下**不需要人工做**：代理只以 `-c http.https://github.com/.proxy=...` 注入当次命令，`git config` 一个字都没写。实测切完之后 `git config --global --get-regexp proxy` = **0 条**，`env` 里 `*_proxy` = **0 条**。
 - 但**谷歌本身不需要走代理**：同一时刻 `https://www.google.com/generate_204` 直连 **204 / 0.48s**，走代理 204 / 0.64s。要代理的从来只是 github 那一段（而且今天 github 直连更快，见下表）。
 - 出口确实换了：同一个容器里分别用 `https://api.ipify.org` 取直连出口和走 `7897` 的出口，**两个 IP 不同**（具体数字不写进这个公开仓库 —— 那是用户本机的宽带公网出口 IP，留在 CMP-3/CMP-4 的内部评论里即可）。所以「切到代理」是真的换了路径，不是自我安慰。
 - **已定，别再重谈**（布谷 15:09，卡片 `be46fd96` 选「不用重写」）：那行真实出口 IP 仍留在 `dev` 的 git 历史对象里，**不 force-push、不重写历史**。此后写文档的规则固定为：**任何真实出口 IP / 节点 IP / 用户名都不进这个公开仓库**，需要证据就写「直连出口与代理出口是两个不同 IP」，具体数字只留在 Paperclip 的内部评论里。
