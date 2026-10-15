@@ -263,6 +263,8 @@ scripts/git-sync.sh probe          # 只测连通性，不动仓库
 | 真推一次（直连路径，收尾） | `scripts/git-sync.sh push origin --delete nonexistent-check-branch` | `- [deleted]`，7s，走直连；已确认远端无残留 |
 | 两条路都不通 | `GIT_SYNC_PROXY_CANDIDATES="http://127.0.0.1:1 http://127.0.0.1:2" …` | `rc=128`，列出试过的每一条路，**不静默成功** |
 | 真实使用（10-15 07:xx） | 得得在 CMP-3 用本脚本 `push dev` + `ff-push main` 各一次 | **都是第 1 步直连就过**（5–8s，未用代理），规则得到实战支持 |
+| 真实使用（10-15 15:00–15:06） | 网管 `scripts/git-sync.sh push origin dev` 两次 | 两次直连都 **21s connect 超时**（正是 10-14 那个症状）**自动切 7897 后 5s 推上**：`8678e78..c8c3b0b dev`。全程没人切过代理，切完 `--get-regexp proxy` 仍 0 条 |
+| 直连慢成功（15:05） | `scripts/git-sync.sh ls-remote … HEAD` | 直连**成功但花 35s**（同刻走代理 3s）→ 只写「直连优先」不够，还得允许失败快切 |
 | 非网络错误 | `… ls-remote …/definitely-not-a-repo-xyz-42 HEAD` | `Repository not found` → `rc=128` 原样冒泡，不用代理掩盖 |
 
 要点：
