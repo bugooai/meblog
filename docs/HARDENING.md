@@ -129,7 +129,7 @@ docker exec <后端容器> sh -c 'grep -H "FRONTEND_REVALIDATE_URL" /app/.env.* 
 ```
 
 - 如果测试环境的 `FRONTEND_REVALIDATE_URL` 填的是 `http://127.0.0.1:8001/...` 或宿主 IP:8001 这种**穿宿主机映射**的地址就麻烦了：在后端容器里 `127.0.0.1` 指的是这个容器自己，所以它本来就不通，只是没人报错 —— 发不出去只打一行 warning（`backend/app/utils/revalidate.py:52`），首页最长 180 秒才更新，看起来像「缓存没刷」而不像故障。**先把地址改成容器名，再改绑定。**
-- 容器名的拼写在仓库里摇摆过：`8018d22` 时 `image:` 写 `meblog-*`、`container_name:` 写 `memblog-*`（多一个 m），到 `5cc24e6` 才统一。**以线上为准，别以文件为准**：`docker ps --format '{{.Names}}  {{.Ports}}'` 是唯一可信的名单。改 `container_name` 等于重建容器 + 换 DNS 名，而服务器上 `backend/.env.production` 里写死的那个名字不会跟着变 —— revalidate 从此静默失效（首页最长 180 秒才更新），日志里只有一行 warning。**下次 `up -d` 之前先把两边的名字对一遍。**
+- 容器名从来没换过，换过的是引用。四个 compose 文件里的 `container_name` 从 `2f34820` 到 `e922dd5` 一直是 `meblog-backend-prod` / `meblog-frontend-prod` / `meblog-backend-test` / `meblog-frontend-test`（复认命令见第八节）。`5cc24e6` 修的是**引用侧少一个 m**：compose 的 `SERVER_API_BASE_URL` 默认值、`.env.example` 注释、两份 `FRONTEND_REVALIDATE_URL` 模板、`frontend/.env.production.example` 两行、`docs/DEPLOY.md`、nginx 模板的 `proxy_pass`，加 `backend/migrate.sh` 与 `docs/PRD.md` 的示例库名，共 15 处（`git show --stat 5cc24e6`）。**以线上为准，别以文件为准**这条习惯仍然成立，但理由是另一头：服务器上那份手写的 `backend/.env.production` 不在 git 里，`git pull` 到 `5cc24e6` 也改不到它，而它当年照的是旧模板，里面很可能仍写着 `memblog-frontend-prod`。上面那条 `docker exec` 一跑就能确认 —— 是错的就改字，然后 `docker compose up -d` 重建（env 在容器创建时读进去，只改文件不重建等于没改），revalidate 才真的通；不改就一直静默失效：日志里只有一行 warning（`backend/app/utils/revalidate.py:52`），首页最长 180 秒才更新，看起来像「缓存没刷」而不像故障。**下次 `up -d` 之前把 `.env` 里的名字和 `docker ps` 的名单对一遍。**
 
 代价说清楚：绑到 `127.0.0.1` 之后，测试站只能从服务器本机或 SSH 隧道看：
 `ssh -N -L 18001:127.0.0.1:8001 -L 18000:127.0.0.1:8000 <部署账号>@116.62.176.216`，浏览器开 `http://127.0.0.1:18001`。
@@ -292,3 +292,20 @@ Review 的三处标红**我全部接受**，其中两条是事实性的、我这
 | 第 2 节「生产侧要不要一起改绑定」当时是空的 | 现在有量值：线上 nginx 转 `localhost:9001` / `localhost:9000`，`nginx -T` 里 0 个 upstream。结论仍是**生产侧只关安全组**，理由从「没核过不敢动」换成「`localhost` 是名字不是地址，改绑定必须同一次把 nginx 写死成 `127.0.0.1` 才不留 502 的坑；而生产侧本来 filtered，这一刀只有等 https 那次一起动才划算」 |
 
 第七节之外还改了两处文件头/正文的措辞：`deploy/nginx/meblog.bugooai.cn.conf` 里「网管看不见线上 nginx」那句错误前提已换成实测值 + 复认命令，`CONFIRM-ON-SERVER` 标记改成「已核实（端口对得上）+ 现状没有 upstream 块」。**仍然没有动任何 compose、没有动线上、没有动 main。**
+
+## 八、CMP-8 更正：第 2 节「容器名在仓库里摇摆过」这条前提是错的（2026-10-16，得得）
+
+从 `3639b86` 起（CMP-6 review 新写的这条），第 2 节把这件事写成「`container_name:` 当时是 `memblog-*`，到 `5cc24e6` 才统一，所以下次 `up -d` 会重建容器 + 换 DNS 名」。前提不成立。三条命令本地就能复跑，不需要那条已经泄露的 SSH 通道：
+
+```bash
+# 1) 五个 commit 输出完全一致：四个 container_name 全是 meblog-*
+for rev in 2f34820 8018d22 5cc24e6 3639b86 e922dd5; do git grep -h 'container_name:' $rev -- docker-compose-*; done | sort | uniq -c
+# 2) 空输出 —— 任何分支任何提交都没写过 `container_name: memblog`
+git log --all -S 'container_name: memblog' --oneline
+# 3) 9 个文件 / 15 处 —— 全是引用侧：默认值、示例、注释、nginx proxy_pass、示例库名
+git show --stat 5cc24e6
+```
+
+`memblog-*` 在 `8018d22` 上只出现在引用侧，从未出现在 `container_name:`。所以「改 `container_name` 等于换 DNS 名」是虚构的风险，已从第 2 节删掉；危害本身保留，换成真实的那条链路：**手写 `.env` 不在 git 里，名字要用 `docker exec` 跟 `docker ps` 对，改完 `up -d` 重建才生效**。`5cc24e6` 的提交说明本身是对的（它写的就是「compose 里 `container_name` 是 meblog，默认值写成 memblog」），不动；第五节第 2 条「`5cc24e6` 已修（15 处同类写法一次改完）」与本次口径一致，也不动。
+
+回滚：`git revert <本节这个 commit>`。
