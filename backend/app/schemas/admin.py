@@ -36,6 +36,16 @@ class TokenData(BaseModel):
     admin_id: Optional[str] = None
 
 
+class AuthStatusResponse(BaseModel):
+    """登录页用来决定「要不要显示初始化入口」。
+
+    只回答两个布尔值，不暴露账号数量或邮箱 —— 前台本来就不该知道站里有几个人。
+    """
+
+    needs_bootstrap: bool
+    allow_registration: bool
+
+
 class AdminAccountCreate(BaseModel):
     """管理员建号用的载荷（只有管理员能调，见 /admins）。
 

@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from app.database import get_db
-from app.schemas import AdminCreate, AdminResponse, Token
+from app.schemas import AdminCreate, AdminResponse, AuthStatusResponse, Token
 from app.services import AuthService
 from app.utils.security import get_current_user
 from app.models import Admin
@@ -15,6 +15,12 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", response_model=AdminResponse, status_code=status.HTTP_201_CREATED)
 async def register(admin: AdminCreate, db: AsyncSession = Depends(get_db)):
     return await AuthService.register(db, admin)
+
+
+@router.get("/status", response_model=AuthStatusResponse)
+async def auth_status(db: AsyncSession = Depends(get_db)):
+    """公开：站里还没有任何账号时，登录页需要给出初始化入口。"""
+    return await AuthService.get_status(db)
 
 
 @router.post("/login", response_model=Token)

@@ -6,6 +6,11 @@ export interface LoginData {
   password: string;
 }
 
+export interface AuthStatus {
+  needs_bootstrap: boolean;
+  allow_registration: boolean;
+}
+
 export interface RegisterData {
   username: string;
   email: string;

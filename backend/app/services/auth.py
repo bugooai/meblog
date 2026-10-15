@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 from typing import Optional
 from app.models import Admin
-from app.schemas import AdminAccountCreate, AdminCreate, AdminResponse, Token
+from app.schemas import (
+    AdminAccountCreate,
+    AdminCreate,
+    AdminResponse,
+    AuthStatusResponse,
+    Token,
+)
 from app.dao import AdminDao
 from app.utils.security import verify_password, create_access_token
 from app.utils.logger import logger
@@ -48,6 +54,20 @@ class AuthService:
         except Exception as e:
             logger.error(f"Error registering admin {admin.username}: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+
+    @staticmethod
+    async def get_status(db: AsyncSession) -> AuthStatusResponse:
+        """站点现在需不需要「初始化第一个账号」。
+
+        和 register 的判断口径必须一致：空库时第一个账号总是能建（否则站里没人
+        能进后台），所以那时 allow_registration 也是 True，和开关无关。
+        """
+        account_count = await AdminDao.count_accounts(db)
+        needs_bootstrap = account_count == 0
+        return AuthStatusResponse(
+            needs_bootstrap=needs_bootstrap,
+            allow_registration=needs_bootstrap or settings.ALLOW_REGISTRATION,
+        )
 
     @staticmethod
     async def login(

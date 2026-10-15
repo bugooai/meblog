@@ -11,6 +11,7 @@ from configs import settings
 REGISTER_URL = "/api/v1/auth/register"
 LOGIN_URL = "/api/v1/auth/login"
 ADMINS_URL = "/api/v1/admins"
+STATUS_URL = "/api/v1/auth/status"
 
 
 def _register(client, username, password="password123"):
@@ -165,3 +166,44 @@ class TestPromoteAndDemote:
         response = client.patch(ADMINS_URL + f"/{admin_user.id}", json={"is_admin": False}, headers=other_headers)
         assert response.status_code == 200, response.text
         assert client.get(ADMINS_URL, headers=admin_headers).status_code == 403
+
+
+class TestBootstrapStatus:
+    """登录页的初始化入口：站里没人时才给，且不给多任何一条权限。
+
+    入口本身走的是公开的 /auth/register，所以这里锁的是「什么时候该显示」
+    和「显示出来的东西不能把站点信息漏出去」。
+    """
+
+    def test_empty_site_asks_for_bootstrap(self, client, monkeypatch):
+        """注册开关关着也得报 needs_bootstrap —— 否则新装的站永远进不去。"""
+        monkeypatch.setattr(settings, "ALLOW_REGISTRATION", False)
+        response = client.get(STATUS_URL)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["needs_bootstrap"] is True
+        assert body["allow_registration"] is True
+
+    def test_bootstrap_flag_closes_after_first_account(self, client):
+        assert client.get(STATUS_URL).json()["needs_bootstrap"] is True
+        assert _register(client, "owner").status_code == 201
+        body = client.get(STATUS_URL).json()
+        assert body["needs_bootstrap"] is False
+
+    def test_status_agrees_with_register_when_closed(self, client, admin_user, monkeypatch):
+        """状态说有门，注册就必须能过；说没门，注册就必须 403。两者不能各说一套。"""
+        monkeypatch.setattr(settings, "ALLOW_REGISTRATION", False)
+        body = client.get(STATUS_URL).json()
+        assert body["allow_registration"] is False
+        assert _register(client, "stranger").status_code == 403
+
+    def test_status_agrees_with_register_when_open(self, client, admin_user, monkeypatch):
+        monkeypatch.setattr(settings, "ALLOW_REGISTRATION", True)
+        assert client.get(STATUS_URL).json()["allow_registration"] is True
+        assert _register(client, "stranger").status_code == 201
+
+    def test_status_leaks_no_account_details(self, client, admin_user):
+        """匿名拿到的只有两个布尔值，没有数量、没有邮箱、没有 id。"""
+        response = client.get(STATUS_URL)
+        assert set(response.json().keys()) == {"needs_bootstrap", "allow_registration"}
+        assert admin_user.email not in response.text

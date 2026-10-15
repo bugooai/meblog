@@ -39,10 +39,17 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 验证：浏览器打开 <http://127.0.0.1:8000/health> 应返回 `{"status":"ok"}`，
 <http://127.0.0.1:8000/docs> 是接口文档。表会在启动时自动创建（`app/main.py` 的 startup 钩子里 `create_all`），SQLite 文件落在 `backend/meblog.db`，已被 `.gitignore` 忽略。
 
-### 创建第一个账号（只能从 API 建）
+### 创建第一个账号
 
-前端只有登录页，**没有注册页**，而 `ALLOW_REGISTRATION` 默认是 `false`。
-例外：`admins` 表为空时第一个账号仍可注册（用于初始化）。所以第一次必须用命令行建号：
+前端只有登录页，**没有注册页**，`ALLOW_REGISTRATION` 默认也是 `false`。
+例外只有一个：`admins` 表为空时，第一次注册放行并且给管理员权限（否则没人能进后台）。
+
+所以起完前端直接打开 <http://127.0.0.1:3000/login>：站里还没有账号时，这一页显示的是
+「初始化站点」面板（用户名 / 邮箱 / 密码），提交后建号 + 登录 + 进后台一次做完。
+判断依据是公开的 `GET /api/v1/auth/status`，它只回答两个布尔值，不吐账号数量和邮箱；
+库里一旦有任何账号，面板消失，这一页变回普通登录。
+
+不想开浏览器的话，命令行一样能用（走的还是同一条 `POST /auth/register`）：
 
 ```powershell
 $body = @{ username = "bugu"; email = "you@example.com"; password = "至少8位" } | ConvertTo-Json
