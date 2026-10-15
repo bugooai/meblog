@@ -1,9 +1,17 @@
 # 线上暴露面收口核对（116.62.176.216 / meblog.bugooai.cn）
 
-2026-10-15 17:26–17:27 UTC 从容器外对线上做的真实探测，第一节全部原样贴输出。
+2026-10-15 从容器外（17:26–17:27 UTC 首测、18:18–18:20 UTC 在**线上切到 `dev@5cc24e6` 之后**复测）+ 机器上只读（17:0x 盘点、17:59 UTC 复量）两个方向量过的那台机，本文全部原样贴输出。
 每条修法都配「怎么验」和「怎么撤」，改一处验一处。
 
-**实测和推断必须分开看。** 网管没有这台机的 SSH 通道，所以下面这些**一条都不是外部探测能证明的**：容器名和镜像、compose 里的端口映射、库名和 PostgreSQL 版本、`ufw` 状态、线上 nginx 现有配置、服务器上 `.git/config` 的内容。凡是推断的地方都标了「推断」，并配一条在机器上跑的只读确认命令。**确认之前不要照抄任何一步。**
+**实测和推断必须分开看**，但要分对是哪一类。这台机的数据有三种来源，别混：
+
+| 来源 | 能证明什么 | 本文里的标记 |
+|---|---|---|
+| 容器外探测（网管，17:26–17:27 / 18:18–18:20 UTC） | 端口开不开、HTTP 码、TLS 有没有、PostgreSQL 协议是否应答 | 第一节基线表 |
+| **机器上只读登录**（网管，17:0x–17:1x 盘点 + 17:59 UTC 复量，见 [CMP-4](/cmp/issues/CMP-4)） | 容器名/镜像/端口映射、库名、`ufw` 状态、nginx 现有配置、`.git/config` 内容 | 第五节，带时间戳 |
+| 仓库里的字面值 | compose 应该长什么样 —— **不等于线上正在跑什么** | 各处「以线上为准」 |
+
+第五节把原来标成「推断」的那批条目升级成了机器上的实测，`3639b86` 给每条配的只读复认命令**全部保留**：那条 SSH 通道用的是已经泄露的 root 口令，口令一轮换这条通道就没了，所以这些值是**带时间戳的快照，不是永久事实**。动之前按复认命令再跑一遍。
 
 **这台机同时跑生产博客和历史上写进源码的测试库，动手前先确认没有外部消费者。**
 
@@ -24,8 +32,15 @@ TCP（`python3` connect，6 秒超时；`filtered` = 有防火墙丢包，`refus
 
 两条读数说明：
 
-- **443 是 `refused`，不是 timeout** —— 包到了机器上被拒（对比 9000/9001 的 timeout，那两个是安全组在丢包）。所以 443 大概率**没被安全组挡**，证书签下来就能对外服务，不用再加放行规则。**推断**，动手前从外面复测一次。
-- **6001 没测** —— `docs/PRD.md:819` 写这台机的 PostgreSQL 跑在 6001，`docs/DEPLOY.md:179` 那条泄露地址也是 `...:6001/meblog_test`。基线表里没有它。**动手前补一次探测**：`timeout 6 python3 -c "import socket;socket.create_connection(('116.62.176.216',6001),6)" && echo OPEN`，通了就是第二个要收的口子。
+- **443 是 `refused`，不是 timeout** —— 包到了机器上被拒（对比 9000/9001 的 timeout，那两个是安全组在丢包）。所以 443 **没有被安全组挡**，证书签下来就能对外服务，不用加放行规则。这条现在有机器上的量值背书：`ss -ltn | grep -c ":443"` → **0**（第五节），是没人监听，不是被挡。
+- **6001 已补测（2026-10-15 18:20:38Z）** —— `docs/PRD.md:819` 写这台机的 PostgreSQL 跑在 6001，`docs/DEPLOY.md:179` 那条泄露地址也是 `...:6001/meblog_test`。实测：
+
+  ```
+  116.62.176.216:6001  ConnectionRefusedError  2137 ms     ← 没人监听，但安全组没挡
+  116.62.176.216:6379  TimeoutError: timed out 6005 ms     ← Redis 默认端口，安全组在丢包
+  ```
+
+  结论：**6001 不是第二个已经在漏的口子**，但它和 443 一样「安全组放行 + 本机无人监听」，意味着以后任何人在这台机上绑一个 6001（或任何非 80/22 端口）都会**直接公网可见**。收口时建议在安全组里把 80/22/443 之外的入方向放行逐条过一遍，别只删 8200/8000/8001 三条了事。只测了文档点名的这两个端口，没有做端口扫描。
 
 应用层（17:27:32Z）：
 
@@ -46,7 +61,7 @@ TCP（`python3` connect，6 秒超时；`filtered` = 有防火墙丢包，`refus
 ### 1）Postgres 挂在公网 `0.0.0.0:8200` —— 最高优先级
 
 **外面只证明了两件事**：8200 公网可连，且它对 8 字节 SSLRequest 回了 `N`（= PostgreSQL，不接受加密）。
-下面这句是**推断**，机器外面拿不到这些信息：容器叫 `common-postgres`、镜像是 postgres:15-alpine、映射是 `0.0.0.0:8200->5432`、库里有 `meblog`（生产）和 `meblog_test`。
+容器叫 `common-postgres`、镜像是 `postgres:15-alpine`、映射是 `0.0.0.0:8200->5432`、库里有 `meblog`（生产，owner `admin`）和 `meblog_test`（owner `test`）—— 这四条是 2026-10-15 17:0x UTC 在机器上读到的（第五节），**不是推断**，但它是换构建之前的快照，`docker inspect` 复认只要十秒，动之前必跑。
 这个 compose **不在本仓库**（是服务器上共享的 `common-*` 栈），所以这里只给最小改动，不动它。
 
 先把推断变成事实（在机器上跑，全部只读）：
@@ -118,7 +133,7 @@ docker exec <后端容器> sh -c 'grep -H "FRONTEND_REVALIDATE_URL" /app/.env.* 
 
 代价说清楚：绑到 `127.0.0.1` 之后，测试站只能从服务器本机或 SSH 隧道看：
 `ssh -N -L 18001:127.0.0.1:8001 -L 18000:127.0.0.1:8000 <部署账号>@116.62.176.216`，浏览器开 `http://127.0.0.1:18001`。
-生产侧（9000/9001）**不建议**跟着改绑定：nginx 的 upstream 具体指向什么地址还没核（对照说明在 `deploy/nginx/meblog.bugooai.cn.conf` 文件头），万一它是走 docker 网桥而不是 `127.0.0.1`，改完站点直接 502。生产侧只关安全组，实测已经是 filtered。
+生产侧（9000/9001）**建议只关安全组，不改绑定**。不是「不敢改」，是量过之后判断收益不值：线上 nginx 实测转的是 `proxy_pass http://localhost:9001`（站点/`/admin`）和 `http://localhost:9000`（`/api`），`nginx -T` 里 **0 个 `upstream` 块**（第五节）—— 也就是说绑 `127.0.0.1` 在方向上确实能对上，但 `localhost` 是**名字**不是地址：docker 的 `127.0.0.1:9001:` 绑定只建 IPv4 监听，而 Ubuntu 的 `/etc/hosts` 里 `localhost` 同时挂 `127.0.0.1` 和 `::1`，解析顺序一变就 502。所以真要改，**必须同一次把 nginx 里那三行写死成 `127.0.0.1:9001` / `127.0.0.1:9000` 再 `nginx -t && reload`**，两步拆开做就是给自己埋 502。生产侧实测本来就是 filtered，公网进不去；这一刀的收益要等 https 那次一并动 nginx 时才划算，别单独排期。
 
 验（改前基线已在第一节）：`curl -o /dev/null -w '%{http_code}\n' http://116.62.176.216:8000/docs` 期望非 200；
 撤：删掉 `127.0.0.1:` 前缀重新 `up -d`，或在安全组把 8000/8001 放行加回来。
@@ -127,7 +142,7 @@ docker exec <后端容器> sh -c 'grep -H "FRONTEND_REVALIDATE_URL" /app/.env.* 
 
 目标状态参考：`deploy/nginx/meblog.bugooai.cn.conf`。
 
-先在机器上把「线上 nginx 现在长什么样」看清楚（这份文件头里的现状描述是推断，外部探测看不到 nginx 配置）：
+线上 nginx 现状**已经量过了**（第五节，17:59 UTC 只读登录），下面这三条留着是为了复认 —— 状态会漂，动手前再跑一次：
 
 ```bash
 certbot certificates                                # 有没有证书、有没有装过 certbot
@@ -213,3 +228,67 @@ Review 的是 `8018d22` 这份材料本身。**没有执行任何一条线上动
 
 回滚：`git revert 8018d22` 撤掉材料本体，再 `git revert <本节这个 commit>` 撤掉上面的口径修订。
 线上服务的生效条件是有人按上面的步骤部署 —— 到 review 为止，一条都没部署过。
+
+## 五、机器上只读实测快照（2026-10-15 17:59 UTC，网管）
+
+来源：CMP-4 期间布谷给的通道（口令 + askpass，口令不进 argv/日志），**全程只读**，唯一写入是部署和那次 2G 临时 swap（已 `swapoff`）。这一节把 `3639b86` 标成「推断」的几条升级成实测；口令轮换后这条通道会失效，所以下面每一项都带复认命令。
+
+| 项 | 机器上量到的值 | 复认命令 |
+|---|---|---|
+| `certbot` | **未安装**（`command -v certbot` 空） | `command -v certbot` |
+| nginx 版本 / 自检 | `nginx/1.18.0 (Ubuntu)`；`nginx -t` = syntax ok / test successful | `nginx -v; nginx -t` |
+| 443 监听 | `ss -ltn \| grep -c ":443"` → **0** | 同左 |
+| `/etc/letsencrypt` | **No such file or directory**（从没签过） | `ls /etc/letsencrypt/live/` |
+| `sites-enabled/` | `default`、`meblog-test.bugooai.cn.conf`、`meblog.bugooai.cn.conf`（`conf.d/` 空） | `ls -l /etc/nginx/sites-enabled/` |
+| `default` 里那两行 | `27:# listen 443 ssl default_server;`、`28:# listen [::]:443 ssl default_server;` —— 注释状态，且在 **default** server 里，不在 meblog 那组 | `grep -n 'listen 443' /etc/nginx/sites-enabled/default` |
+| meblog 的 server block | `listen 80` + `server_name meblog.bugooai.cn`；`location / → proxy_pass http://localhost:9001`；`location /admin → http://localhost:9001/admin`；`location /api → http://localhost:9000`；另有一条 `location = /baidu_verify_codeva-*.html` | `nginx -T \| sed -n '/server_name meblog/,/}/p'` |
+| `upstream` 定义 | **0 个** —— 线上没用 upstream 块，走的是宿主机回环上的 compose 发布端口 | `nginx -T \| grep -c 'upstream '` |
+| `ufw` | `inactive`（所以公网可达性只取决于阿里云安全组） | `ufw status` |
+| 服务器上的 `.git/config` | `origin` 形如 `https://<user>:<token>@gitee.com/...`，明文凭据嵌在 URL 里 | `grep -n url /root/code/projects/meblog/.git/config` |
+| 机器规格 | Ubuntu 22.04，2 核 / 3.4G，up 176 天 | `uptime; free -h` |
+
+**这份快照对第 2、3 节的直接影响**：
+
+1. 第 3 节里 `deploy/nginx/meblog.bugooai.cn.conf` 那两行 `upstream meblog_*_prod { server 127.0.0.1:900x; }` 是**目标形态不是现状** —— 照抄等于把「按名字转 localhost」换成「走显式 upstream」，方向没错但属于改寻址方式，`server_tokens off` / `map` / `keepalive_*` 一起进去才是成套的。**更稳的是路径 A（`certbot --nginx`）**：它在现有 `location` 结构上加 443，不重排寻址，回滚就是一个 `.bak` 文件。
+2. `upstream` 名字少一个 m 这类错误线上是**静默的**：真实容器名解析 0.01s，错名字要等约 2s 才回 `SERVFAIL`，页面照样 200，日志里只有一行 `EAI_AGAIN` —— 这就是 `/` 曾经 4.02s 的原因，`5cc24e6` 已修（15 处同类写法一次改完）。**改绑定时别顺手改容器名**。
+3. 「`/admin` 未登录时回落成站点首页」是设计（`frontend/components/AdminGuard.tsx`），不是故障；布谷以为「后台没启动」的两个原因里，这个是其一，另一个就是敲 `https://` 被拒。写文档时别把它写成 bug。
+
+## 六、复测记录（线上已于 17:33 切到 `dev@5cc24e6` 之后）
+
+```
+=== TCP 2026-10-15T18:19:02Z ===
+116.62.176.216:22     OPEN                         34 ms
+116.62.176.216:80     OPEN                         34 ms
+116.62.176.216:443    ConnectionRefusedError       2154 ms
+116.62.176.216:8000   OPEN                         34 ms
+116.62.176.216:8001   OPEN                         34 ms
+116.62.176.216:8200   OPEN                         33 ms
+116.62.176.216:9000   TimeoutError: timed out      6005 ms
+116.62.176.216:9001   TimeoutError: timed out      6003 ms
+
+=== HTTP 2026-10-15T18:18:48Z ===
+http://116.62.176.216:8000/docs   HTTP 200  0.044880s  size=945
+http://116.62.176.216:8001/       HTTP 200  0.113667s  size=65571
+http://meblog.bugooai.cn/         HTTP 200  0.321386s  size=65563   （nginx/1.18.0 (Ubuntu)）
+https://meblog.bugooai.cn/        HTTP 000  （curl exit 7，连接被拒）
+116.62.176.216:8200 PostgreSQL SSLRequest 回包: b'N'
+
+=== 补测 2026-10-15T18:20:38Z（只测文档点名的端口，不做扫描）===
+116.62.176.216:6001  ConnectionRefusedError  2137 ms
+116.62.176.216:6379  TimeoutError: timed out 6005 ms
+```
+
+**换构建没有改变任何一条暴露面**：8000 的 Swagger、8001 的测试前端、8200 的 PostgreSQL 全部照旧公网可达，443 照旧没人监听。`:8001` 的响应体从 61 494 B 涨到 65 571 B、`/api/v1/auth/status` 已存在 —— 这两条是「新构建确实上去了」的旁证，不是收口的旁证。
+
+## 七、CMP-5 对第四节的处理（2026-10-15 18:2x UTC，网管）
+
+Review 的三处标红**我全部接受**，其中两条是事实性的、我这一轮补掉了，一条按他的新顺序改进点选卡：
+
+| 他指出的 | 我的处理 |
+|---|---|
+| 「推断被写成实测」，且理由是「网管没有 SSH 通道」 | 前半句接受、后半句不成立：CMP-4 期间布谷给过通道，我在机器上只读量过两轮（17:0x 盘点、17:59 复量）。已按第五节把那批条目升级成**带时间戳的机器实测**，他给的复认命令一条没删。顶部那张「三种来源」的表现在把 实测/推断 分开之外，多加了「仓库字面值 ≠ 线上现状」这一层 |
+| 443 / 6001 该怎么读 | 6001 已于 18:20:38Z 补测：**refused**（没人监听，但安全组没放行也没挡 —— 以后谁绑一个非 80/22/443 的端口就直接公网可见）；6379 filtered。只测文档点名的这两个，没做扫描 |
+| `ss` + `pg_stat_activity` 证明不了「没有外部消费者」 | 接受，这是本次最有用的一条。点选卡里数据库那条已按他的顺序重写：**先删安全组 8200 放行**（控制台点两下、秒级可撤、不重建容器），观察几天再谈改绑定 |
+| 第 2 节「生产侧要不要一起改绑定」当时是空的 | 现在有量值：线上 nginx 转 `localhost:9001` / `localhost:9000`，`nginx -T` 里 0 个 upstream。结论仍是**生产侧只关安全组**，理由从「没核过不敢动」换成「`localhost` 是名字不是地址，改绑定必须同一次把 nginx 写死成 `127.0.0.1` 才不留 502 的坑；而生产侧本来 filtered，这一刀只有等 https 那次一起动才划算」 |
+
+第七节之外还改了两处文件头/正文的措辞：`deploy/nginx/meblog.bugooai.cn.conf` 里「网管看不见线上 nginx」那句错误前提已换成实测值 + 复认命令，`CONFIRM-ON-SERVER` 标记改成「已核实（端口对得上）+ 现状没有 upstream 块」。**仍然没有动任何 compose、没有动线上、没有动 main。**
