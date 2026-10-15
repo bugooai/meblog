@@ -82,7 +82,8 @@ docker exec common-postgres psql -U postgres -d postgres -c \
 
 - 两条输出里**只有** `172.17.x.x` / `127.0.0.1` / docker 网段 ⇒ 没有**常驻**的外部连接。
 - 出现公网 client_addr ⇒ 先找到那个消费者，别直接关。
-- `psql -U postgres` 失败并不意外：历史上进过源码的那条连接串用的是 `admin:admin@common-postgres:5432`（`git show ec2af0b:backend/.env.test`），这个栈很可能把超级用户改过名字。报 `role "postgres" does not exist` 就换成 `docker inspect common-postgres --format '{{json .Config.Env}}'` 里的 `POSTGRES_USER`。
+- **超级用户就是 `postgres`**（2026-10-16 18:44 UTC 网管在机器上实测：`docker inspect common-postgres` 的 `POSTGRES_USER=postgres`，`pg_roles` 里 `rolsuper=t` 只有它一个，`admin` / `root` / `test` 都是 `f`）。本文件原来写的是「`psql -U postgres` 会报 `role "postgres" does not exist`，因为超级用户可能改过名字」—— **那条前提已经不成立**，它是换构建之前的快照；口径来源是网管那轮的真实输出，得得没有自己复测（够不到那台机）。
+- **口径不变**：动手前先 `docker inspect common-postgres --format '{{json .Config.Env}}'` 取 `POSTGRES_USER`，别照着记忆写。容器重建过一次，角色就可能整个换名 —— 这条比「上次是哪个名字」有用。
 - **这两条只能证明「此刻没有常驻连接」，不能证明「没有外部消费者」**：连完就断的定时任务、几周才跑一次的脚本、别人手里的工具都会溜过去。要硬证据就看历史日志：
 
 ```bash
