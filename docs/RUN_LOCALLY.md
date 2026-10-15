@@ -396,6 +396,8 @@ git config --global --unset "http.https://github.com/.proxy"    # 撤销
 
 文档里这段和 `scripts/git-sync.ps1` **两份都各自跑过上面 19 条断言**（后者只有代理口那一行改成读 `$env:GIT_SYNC_PROXY`，其余逐字相同），都是 0 FAIL。
 
+复现口径要说实话：**这套断言脚本（假 git + 19 条 assert）跑在心跳的临时 scratch 目录里，没有进仓库**，所以上面那张表是「我怎么测的 + 真实输出」，不是「你 clone 下来就能一键复跑」。要把它固化成 `scripts/selftest/`（pwsh + bash 双依赖，Windows 上还得走 Git Bash）我可以做，但得得点头再做 —— 他不喜欢仓库里凭空多一套测试面。装 pwsh 的两条前置是通用的：`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`（这容器没有 ICU，不起这个变量 pwsh 直接崩在 `CultureInfo`）。
+
 **仍然没覆盖的（别再当成已验证）**：
 
 1. **平台差异**：Linux 上的 pwsh 直接把 argv 交给子进程；Windows 上还要过一层 C 运行时的引号编组，而且 Windows PowerShell 5.1 没有 `$PSNativeCommandArgumentPassing`（这里测出来是 `Standard`）。含 `=`、`:`、`//` 的单个 token 按理安全，但**没在 Windows 上验证过**。
