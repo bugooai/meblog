@@ -172,6 +172,94 @@ curl -s -X POST http://meblog.bugooai.cn/api/v1/files/upload \
 - 图片类型没有白名单（只有 `admin` 能上传，且管理员本来就能往文章里塞任意 HTML，卡扩展名意义不大）。**但**这条和 `backend/app/dao/admin.py:54` 写死 `is_admin=True` 是联动的：一旦你为了开放注册把 `ALLOW_REGISTRATION` 设成 true，上传接口就从「只有你能传」变成「任何人都能传任意文件」，那时必须加白名单。
 
 
+## 后台登录：口令存在哪里、忘了怎么办（2026-10-16）
+
+### 先说三条事实（每条都有代码依据）
+
+| 问题 | 答案 | 依据 |
+|---|---|---|
+| 后台有几个账号 | 线上只有一个：用户名 `admin`，`is_admin=true` | 服务器上 `admins` 表实测 1 行（2026-10-15 17:2x 只读盘库） |
+| 谁能知道口令明文 | **只有设它的人**。库里存的是 bcrypt 单向哈希（`$2b$12$…`，60 个字符），还原不出明文 | `backend/app/utils/security.py:16`（校验）、`:28`（生成） |
+| 忘了能不能自己找回 | **不能。** 没有「忘记密码」，也没有「登录后改密码」——全站只有两个建号接口写 `password`，`PATCH /admins/{id}` 只改 `is_admin` | `backend/app/api/admins.py:36`、`backend/app/schemas/admin.py:10`、`:15`、`:58` |
+
+### 登进去之前先确认这两点（最常见就是这两条）
+
+- 地址用 **`http://meblog.bugooai.cn/login`**。是 `http` 不是 `https`：443 没人监听（见下面「还没解决的」第 1 条）。直接开 `/admin` 在未登录时会回落成站点首页，那不是坏了。
+- 用户名填 `admin`，**填邮箱也一样能过**：接口先按用户名查，查不到再按邮箱查（`backend/app/services/auth.py:79-81`）。
+
+### 真进不去：先只读诊断，别先改数据
+
+只读命令（不改任何东西；超级用户名先取，`-U postgres` 在这台机上会报 `role "postgres" does not exist`，见 [HARDENING.md](HARDENING.md) 第 1 节）：
+
+```bash
+docker inspect common-postgres --format '{{json .Config.Env}}'   # 取 POSTGRES_USER
+docker exec -i common-postgres psql -U "<POSTGRES_USER>" -d meblog -c \
+  "SELECT username, email, created_at, last_login_at,
+          left(password_hash, 4) AS hash_prefix, length(password_hash) AS hash_len
+   FROM admins;"
+```
+
+怎么读结果：
+
+| `hash_prefix` / `hash_len` | 含义 | 下一步 |
+|---|---|---|
+| `$2b$` / 60 | 口令正常设过，明文只有本人知道 | 走下面 A 或 B |
+| 不是 `$2b$`（例如 `seed-not-for-login`） | **任何口令都登不进去**，报错和「密码错」一模一样，使用者不会知道原委 | 必须重置 |
+| `last_login_at` 为空 | 这个账号从来没成功登录过一次 | 佐证上一行 |
+
+判据依据（2026-10-16 在 `backend/.venv` 里用 `app.utils.security` 原函数实测）：正确口令 `True`、错误口令 `False`、`'seed-not-for-login'` / `''` / `'plaintext123456'` 三种非法哈希一律 `False` —— 不抛异常也不报 500，所以坏哈希的表现和输错口令完全一样：401。
+
+### 重置的两条路（都要布谷点头，都会踢掉他现有的登录态）
+
+**A. 覆盖成新哈希**（推荐，没有暴露窗口）。新口令要从某个渠道传给他一次 —— 所以**必须先有「登录后改密码」能力**（见下面「还没解决的」第 6 条），否则他改不掉，口令长期留在聊天记录里。
+
+写哈希不要用 shell 拼字符串：bcrypt 哈希里全是 `$`，会被 shell 吃掉。用一次性 python heredoc，走 app 自己的函数，口令只从环境变量或 stdin 进，**不进 argv、不进日志、不打印**（容器内的工作目录已是 `/app`，`app` 包可直接 import）：
+
+```bash
+read -rs NEW_PW && export NEW_PW        # 交互式读入，不进 shell 历史、不进 argv
+docker exec -i -e NEW_PW meblog-backend-prod python - <<'PY'
+import asyncio, os
+from sqlalchemy import select
+from app.database import SessionLocal
+from app.models import Admin
+from app.utils.security import get_password_hash
+
+
+async def main():
+    async with SessionLocal() as db:
+        row = (await db.execute(select(Admin).where(Admin.username == "admin"))).scalar_one_or_none()
+        if row is None:
+            print("没有 username=admin 这一行，停手，先做只读诊断")
+            return
+        row.password_hash = get_password_hash(os.environ["NEW_PW"])
+        await db.commit()
+        print("已更新 1 行；口令未打印")   # 别在这里打印口令或哈希
+
+
+asyncio.run(main())
+PY
+unset NEW_PW
+```
+
+改前先留一份原值，撤销就是把这一行写回去（哈希不可逆，写回原哈希等于恢复旧口令）：
+
+```bash
+docker exec -i common-postgres psql -U "<POSTGRES_USER>" -d meblog -c \
+  "COPY (SELECT id, username, email, password_hash, is_admin FROM admins) TO STDOUT" \
+  > /root/backups/admins-row-$(date -u +%Y%m%dT%H%M%SZ).tsv
+```
+
+**B. 清空 `admins` 表，用登录页的「初始化站点」面板自建账号**（`frontend/app/login/LoginForm.tsx:51-58`：建号 + 自动登录在一次提交里做完）。好处：口令全程不过第三者的手。代价要看清 —— **空库期间任何人都能来抢这个管理员**：`backend/app/services/auth.py:49` 空库第一个账号一定是管理员，`:66-69` 这时 `allow_registration` 也强制为 true。所以这条只适合「他人当场建完」，绝不能空着过夜。另外文章的 `created_by` 是 `String(36)`、**没有外键**，删号不报错，但作者归属会指向一个不存在的 id。
+
+### 验法
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -X POST http://meblog.bugooai.cn/api/v1/auth/login \
+  -H 'Content-Type: application/x-www-form-urlencoded' -d 'username=admin' -d 'password=<新口令>'
+# 期望 200；401 = 哈希没写进去或口令不对；浏览器随后 /login 能进 /admin 才算通
+```
+
+
 ## 还没解决的（按影响排序）
 
 1. **HTTPS 没上**：`https://meblog.bugooai.cn` 无响应。登录态是 cookie + JWT，明文 HTTP 上跑等于裸奔；而且微信/微博对 http 链接的抓取也不如 https 稳定。域名已经解析到机器上，套一层 certbot 就能解决 —— 目标配置见 `deploy/nginx/meblog.bugooai.cn.conf`，装/签/验/撤的完整步骤见 [HARDENING.md](HARDENING.md) 第 3 节（**先签再开 80→443 跳转**，顺序反了签不下来）。
@@ -179,3 +267,4 @@ curl -s -X POST http://meblog.bugooai.cn/api/v1/files/upload \
 3. **泄露口令**：那台机既是博客又跑着历史上写进源码的测试库（`...:6001/meblog_test`），端口现在还开不开得你确认；口令必须轮换。2026-10-15 17:26 实测 `116.62.176.216:8200` **仍是公网可达的 PostgreSQL**（协议握手回包 `b'N'`，且拒绝 SSL = 口令明文过网），`ufw` 还是 `inactive`，公网可达性完全取决于阿里云安全组。改前基线、外部消费者怎么先确认、两种收口方案和撤销方法都在 [HARDENING.md](HARDENING.md) 第 1、4 节。
 4. ~~**`is_admin` 写死**~~：已修（`fcebeb0`）。`AdminDao.create_admin` 的 `is_admin` 现在是必填参数，公开注册只在空库时给管理员，之后注册的一律是一般账号；加管理员只能由管理员走 `POST /api/v1/admins`。`ALLOW_REGISTRATION` 仍建议保持 false —— 不是怕提权，是一般账号目前除了登录没有任何专属能力。
 5. **两套 sitemap**：前端 `app/sitemap.ts` 和后端 `app/api/seo.py` 都在生成 sitemap/feed。域名上生效的是前端那份。留着两条路以后必然不一致，等你定留哪个。
+6. **后台没有改密码 / 找回口令的路径**（2026-10-16 记）：接口和页面都没有，口令忘了只能直接改数据库那一行（上一节的 A）。要补两件事：① `POST /api/v1/auth/change-password` —— 校验旧口令 + 新口令，登录后自助改，后台设置页加一个入口；② `backend/reset_admin_password.py` —— 运维侧一次性重置，口径照 `backend/create_tables.py`：口令只从环境变量或 `.env` 读、打印一律打码、非本地库要 `--yes`。这两件做完，A 路才算安全，B 路那个「空库谁都能抢管理员」的暴露窗口也就不需要了。
