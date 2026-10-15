@@ -190,7 +190,7 @@ git ls-remote https://github.com/bugooai/meblog HEAD   # 应该出 SHA
 curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代理拖慢
 ```
 
-外部控制器（`9090`）默认只监听 Windows 的 `127.0.0.1`，容器 `host.docker.internal:9090` 会直接被拒。想让容器里的 agent 查延迟/切节点，需要在 Clash 里打开「允许局域网连接」（`allow-lan: true`）；不开的话只有 git 这条路能用。
+外部控制器**只监听 `external-controller` 绑的地址**，默认在 Windows 的 `127.0.0.1` 上，所以从容器连它一定会被拒；而且**端口不是固定的 9090**（Clash Verge 默认 `9097`，Clash 内核/多数订阅配置默认 `9090`，以你自己配置里写的为准）。第 9 节有 2026-10-15 的实测更正：开 `allow-lan` 并不会顺带放开控制器。
 
 ## 9. 代理白名单：实测枚举（2026-10-15）
 
@@ -201,9 +201,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 | 端口 | 用途 | 从容器连 `192.168.65.254` |
 |---|---|---|
 | `7897` | mixed 代理（git 走这里） | **OPEN** |
-| `9090` | 外部控制器（查节点/切节点） | **Connection refused** |
+| 控制器端口（Clash Verge 默认 `9097`，不是 `9090`） | 外部控制器（查节点/切节点） | `9090` 与 `9097` **都是 Connection refused**（07:40 UTC 网管复测，1–3ms 内拒绝，无人监听） |
 
-`allow-lan` 放开的是代理监听口。控制器是否跟着放开取决于 `external-controller` 绑的地址：写成 `127.0.0.1:9090` 就永远只在本机回环上。要让容器里的网管能查延迟/切节点，得把它改成 `0.0.0.0:9090`（或 `:9090`），**并且同时设 `secret`** —— 否则同一局域网内任何设备都能改你的路由。不设 secret 就别开。
+`allow-lan` 放开的是代理监听口。控制器是否跟着放开取决于 `external-controller` 绑的地址：写成 `127.0.0.1:9090` 就永远只在本机回环上。要让容器里的网管能查延迟/切节点，得把它改成 `0.0.0.0:<你实际用的端口>`（或 `:<该端口>`），**并且同时设 `secret`** —— 否则同一局域网内任何设备都能改你的路由。不设 secret 就别开。**先确认自己的端口再改，别照抄 9090**：Clash Verge 默认是 `9097`。改完要重启核心才生效（网管 07:38 / 07:40 两次复测 `9090` 与 `9097` 仍 refused，说明绑定还没改或核心没重启）。
 
 ### 该走代理的域名（枚举，不是通配）
 
@@ -257,6 +257,7 @@ scripts/git-sync.sh probe          # 只测连通性，不动仓库
 | 真推一次（代理路径） | `GIT_SYNC_SKIP_DIRECT=1 scripts/git-sync.sh push origin HEAD:refs/heads/nonexistent-check-branch` | `* [new branch]`，4s，走 `7897` |
 | 真推一次（直连路径，收尾） | `scripts/git-sync.sh push origin --delete nonexistent-check-branch` | `- [deleted]`，7s，走直连；已确认远端无残留 |
 | 两条路都不通 | `GIT_SYNC_PROXY_CANDIDATES="http://127.0.0.1:1 http://127.0.0.1:2" …` | `rc=128`，列出试过的每一条路，**不静默成功** |
+| 真实使用（10-15 07:xx） | 得得在 CMP-3 用本脚本 `push dev` + `ff-push main` 各一次 | **都是第 1 步直连就过**（5–8s，未用代理），规则得到实战支持 |
 | 非网络错误 | `… ls-remote …/definitely-not-a-repo-xyz-42 HEAD` | `Repository not found` → `rc=128` 原样冒泡，不用代理掩盖 |
 
 要点：
@@ -301,6 +302,9 @@ git-sync ls-remote https://github.com/bugooai/meblog HEAD
 
 ### 查延迟 / 切节点：现在做不到（如实记录，不含糊）
 
-- 从容器测控制器：`host.docker.internal:9090` 与 `192.168.65.254:9090` 都是 **Connection refused**（`curl` exit=7），同一时刻 `7897` 两条路都 OPEN（v6 200/7.9s，v4 200/2.4s）。结论和 10-15 05:55 那次一致：**`allow-lan` 放开的是代理口，不是控制器口**。
-- 要放开只能由布谷在本机改：`external-controller` 绑 `0.0.0.0:9090`（或 `:9090`），**并且同时设 `secret`**。不设 secret 就别开 —— 同局域网任何设备都能改路由。网管不动用户本机的 Clash 配置。
+- 从容器测控制器：`9090` 与 **`9097`（Clash Verge 默认端口）都 refused**，`curl` exit=7，1–3ms 内就被拒（无人监听）。同一时刻 `7897` 走 `-x` 实测 `https://github.com` → 200/3.7s。05:55、07:38、07:40 UTC 三个时间点结论一致：**`allow-lan` 放开的是代理口，不是控制器口**。
+- `scripts/git-sync.sh probe` 现在**同时探 `9097` 和 `9090`** 两个控制器端口（可用 `GIT_SYNC_CONTROLLER_CANDIDATES` 覆盖），并区分三种结果：`curl exit=7` 没监听 / `401`·`403` 已放开且在要 secret（期望状态）/ `200` 已放开但**没有 secret**（危险，立刻设 secret）。
+- 小坑记录：`curl http://<宿主>:7897/version` 返回 **400** 是正常的 —— `7897` 是 mixed 代理口，只接受带代理语义的请求，它不是控制器。查控制器要用 `curl http://<宿主>:<控制器端口>/version`，别拿这个 400 当「控制器通了」。
+- 端口别写死：要放开就改成 `0.0.0.0:<你的实际端口>` 并**同时设 `secret`**，改完重启核心。
+- 决定已下：布谷在 [CMP-3](/cmp/issues/CMP-3) 答「开」，并追问「设 secret 后自带 dashboard 还能用吗」，得得在 CMP-3 已回：Verge 自带面板由 app 自己带 secret，照常可用；**需要自己带 secret 的是第三方面板 / REST / WebSocket**。本卡不再重复收同一个决定（原确认卡 `cc687844` 已 withdraw）。网管不动用户本机的 Clash 配置。
 - 放开之后要补的证据是三条：`GET /version`、`GET /proxies`、`GET /proxies/{name}/delay`。在那之前不做「自动切出口节点」，git 这条链路只依赖 `7897` 是否可连，脚本的 probe 已经能证明这一点。

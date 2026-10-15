@@ -11,7 +11,7 @@
 #   scripts/git-sync.sh push origin dev
 #   scripts/git-sync.sh fetch --prune
 #   scripts/git-sync.sh ls-remote https://github.com/bugooai/meblog HEAD
-#   scripts/git-sync.sh probe          # 只测连通性，不动仓库
+#   scripts/git-sync.sh probe          # 只测连通性（含控制器端口），不动仓库
 #
 # 可选覆盖（不设置就用默认值）：
 #   GIT_SYNC_PROXY_CANDIDATES   依次尝试的代理口，空格分隔
@@ -22,6 +22,8 @@
 set -uo pipefail
 
 PROXY_CANDIDATES="${GIT_SYNC_PROXY_CANDIDATES-http://host.docker.internal:7897 http://192.168.65.254:7897}"
+# 控制器端口不固定（Clash Verge 默认 9097，Clash 内核/多数配置默认 9090），所以两个都探
+CONTROLLER_CANDIDATES="${GIT_SYNC_CONTROLLER_CANDIDATES-host.docker.internal:9097 host.docker.internal:9090 192.168.65.254:9097 192.168.65.254:9090}"
 PROXY_URL_SCOPE="${GIT_SYNC_PROXY_URL_SCOPE-https://github.com/}"
 LOW_SPEED_LIMIT="${GIT_SYNC_LOW_SPEED_LIMIT-1000}"
 DIRECT_LOW_SPEED_TIME="${GIT_SYNC_DIRECT_LOW_SPEED_TIME-20}"
@@ -107,7 +109,27 @@ probe() {
       printf '%-34s %-38s %s\n' "$t" "$kind $url" "${out:-无响应}"
     done
   done
-  printf '%s\n' '注：代理路径要 Clash 在跑。7897 是 mixed 端口；控制器 9090 从容器仍被拒，查延迟/切节点做不到。'
+  probe_controller
+  printf '%s\n' '注：代理路径要 Clash 在跑；7897 是 mixed 端口（直接 GET /version 会得到 400，属正常，它不是控制器）。'
+}
+
+# 控制器探测：端口以实际配置为准，别只试 9090
+probe_controller() {
+  local hp code rc
+  printf '%s\n' '--- 外部控制器（查延迟/切节点才用得上）---'
+  for hp in $CONTROLLER_CANDIDATES; do
+    code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://$hp/version")"
+    rc=$?
+    if [ $rc -ne 0 ]; then
+      printf '%-34s %s\n' "http://$hp/version" "不可达 curl_exit=$rc（多半是没监听在这个地址/端口）"
+    elif [ "$code" = "200" ]; then
+      printf '%-34s %s\n' "http://$hp/version" "HTTP 200 —— 控制器已放开且**没有 secret**，同网段任何设备都能改路由，立刻设 secret"
+    elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
+      printf '%-34s %s\n' "http://$hp/version" "HTTP $code —— 已放开且在要 secret，这是期望状态；网管带 secret 即可查 /proxies"
+    else
+      printf '%-34s %s\n' "http://$hp/version" "HTTP $code"
+    fi
+  done
 }
 
 main() {
