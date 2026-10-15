@@ -207,7 +207,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 
 ### 该走代理的域名（枚举，不是通配）
 
-只有这些**出过直连失败**，且失败的是「按天抖」：
+只有这些**出过直连失败**，且失败的是「按天抖」。**`api.github.com` 不在其中 —— 见下面「禁止走代理」**（10-15 14:51 实测走代理是 403，不是慢）：
 
 | 域名 | 为什么进白名单 |
 |---|---|
@@ -215,7 +215,6 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 | `raw.githubusercontent.com` | 今天直连抖了一次 `000`（6s 超时），重试即恢复 |
 | `codeload.github.com` | 随 `git clone`/release 下载一起抖 |
 | `objects.githubusercontent.com` | release/LFS 资源，同上 |
-| `api.github.com` | 一直没失败过，留着是因为它和上面同一条链路 |
 
 ### 明确**不要**进白名单的（代理只会拖慢）
 
@@ -226,8 +225,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 | `bugoo-ai-dev.oss-cn-hangzhou.aliyuncs.com` | 0.31s | 1.94s | 慢 6.2 倍，别代理 |
 | `meblog.bugooai.cn`（你自己的站） | 0.29s | 2.42s | 慢 8.3 倍，别代理 |
 | `www.baidu.com` | 0.20s | 1.66s | 慢 8.3 倍，别代理 |
-| `pypi.org` | 1.05s | 2.17s | 慢 2 倍，别代理 |
-| `registry.npmjs.org` | 1.26s，3 轮全绿 | 今天抖过一次 `000` 超时 | 走代理反而出问题，别代理 |
+| `pypi.org` | 1.05s → 14:51 复测 0.70s | 2.17s → 14:51 复测 1.15s | 直连略快，同样**别写死方向** |
+| `registry.npmjs.org` | 0.90–2.34s（14:51 四轮） | 0.83–1.36s | **打平**。原「慢 2–8 倍，别代理」是单时刻样本，降级为「别写死方向」 |
+
+**禁止走代理（比「不要」更硬，会直接报错）**：`api.github.com` —— 14:51 实测直连 200/0.42s，走 `7897` **403**（GitHub 按出口 IP 拒）。所以哪天 `github.com` 挂了你手动强行走代理，也**只能给 `github.com` 这一个主机加代理**，`api.github.com`（REST、release 上传、部分认证流走它）必须留直连，否则 403 会打断流程。`scripts/git-sync.sh` 已把它钉死：任何一次调用都额外传 `-c http.https://api.github.com.proxy=`（空值 = 禁用该主机代理），`GIT_SYNC_NEVER_PROXY_HOSTS` 可覆盖。
 
 复测差异（2026-10-15 06:10 UTC，容器内）：`https://meblog.bugooai.cn` 现在**直连和走代理都失败**（`curl` exit=35，`SSL routines::unexpected eof while reading`，TLS 1.2/1.3 都一样），但 `http://meblog.bugooai.cn` 返回 200，443 TCP 也 OPEN。特征是「发出 Client Hello 后服务端不回应就断开」，属服务器 TLS/证书侧，**与代理无关，别据此改白名单**。上表那条 0.29s 应该是当时走的 80 或握手尚未坏。
 
@@ -235,7 +236,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 
 ### 结论写法
 
-`git config --global http.https://github.com.proxy ...` 这种**按主机**的配置就是这里要的形态：只有 github.com 走代理，npm/国内站点照常。它不需要「用完切回来」，因为它本来就没切走别的流量。真要覆盖 `raw.githubusercontent.com` 之类，就为每个主机各写一条 `http.<url>.proxy`，别用 `http.proxy` 全局值。
+`http.https://github.com.proxy` 这种**按主机**的写法是这里要的形态（`git -c` 一次性注入 或 `git config --global` 常驻都可以）。三条实测边界：
+
+- **只有 `github.com` 进代理，`api.github.com` 绝不进**；npm / pypi / 国内站点照常直连。常驻写法不需要「用完切回」，因为它本来就没切走别的流量；要「用完就没了」就用一次性 `-c`，实测 `git config --global --get-regexp proxy` 与 `env` 里 `*_proxy` 都是 0 条。
+- **别用光秃的 scope**：`-c http.https://.proxy=<url>`（只写 scheme）实测**完全不生效** —— git 没走代理，报的是连 `github.com` 失败而不是连代理失败。所以按主机写不是风格问题，是能不能生效的问题。
+- **别用全局 `http.proxy`**：它会把 `api.github.com`、npm、OSS 一起拖进代理。实测 `-c http.proxy=http://127.0.0.1:1` 会让 `api.github.com` 变成「连不上 127.0.0.1」；再加上 `-c http.https://api.github.com.proxy=` 就恢复成 GitHub 自己的 403（直连），这就是脚本那条保险的原理。
 
 ### 容器侧固化：`scripts/git-sync.sh`（直连优先，失败自动走代理）
 
@@ -271,23 +276,24 @@ scripts/git-sync.sh probe          # 只测连通性，不动仓库
 
 ### Windows 侧配方（PowerShell，可直接粘贴）
 
-**A. 常驻按主机代理**（最省事；只影响 `github.com`，别的流量照常，不需要「用完切回」）：
+按 10-15 14:55 的验收口径重排：**A/B 都是 `-c` 一次性注入，不写任何配置文件**，所以「关闭」这一步天然不需要人工（实测 `git config --global --get-regexp proxy` 与 `env` 里 `*_proxy` 都是 0 条）。C 才是要常驻的情况，但它就不算零残留了。
+
+**A. 一次性走代理拉一次 github（先跑这条取证）**：
 
 ```powershell
-git config --global "http.https://github.com.proxy" "http://127.0.0.1:7897"
-git ls-remote https://github.com/bugooai/meblog HEAD    # 验证：应该出 SHA
-git config --global --unset "http.https://github.com.proxy"    # 撤销
+git -c "http.https://api.github.com.proxy=" -c "http.https://github.com.proxy=http://127.0.0.1:7897" ls-remote https://github.com/bugooai/meblog HEAD
+git config --global --get-regexp proxy    # 验证零残留：这条应该没有输出
 ```
 
-**B. 直连优先 + 失败自动走代理**（和容器侧同一条规则，写进 `$PROFILE` 后长期不用管）：
+**B. 直连优先 + 失败自动走代理**（和容器侧同一条规则，写进 `$PROFILE`，长期不用管，同样零残留）：
 
 ```powershell
 function git-sync {
   param([Parameter(ValueFromRemainingArguments = $true)]$GitArgs)
-  git @GitArgs
+  git -c "http.https://api.github.com.proxy=" @GitArgs
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "[git-sync] 直连失败(rc=$LASTEXITCODE)，改用 Clash 代理重试一次"
-    git -c "http.https://github.com.proxy=http://127.0.0.1:7897" @GitArgs
+    Write-Host "[git-sync] 直连失败(rc=$LASTEXITCODE)，改用 Clash 代理重试一次；api.github.com 仍强制直连"
+    git -c "http.https://api.github.com.proxy=" -c "http.https://github.com.proxy=http://127.0.0.1:7897" @GitArgs
   }
 }
 ```
@@ -295,19 +301,29 @@ function git-sync {
 用法 `git-sync push origin dev`；一条验证命令：
 
 ```powershell
-git-sync ls-remote https://github.com/bugooai/meblog HEAD
+git-sync ls-remote https://github.com/bugooai/meblog HEAD    # 应该第 1 步直连就出 SHA
 ```
 
-> 诚实边界：网管的 cwd 在容器里，够不到这台 Windows 的文件系统，**上面两段 PowerShell 没有在实机执行过**。等价的 bash 逻辑（直连优先 / 代理重试 / 失败不静默）已按上表实测。请把验证命令的真实输出贴回 [CMP-4](/cmp/issues/CMP-4) 评论，作为 Windows 侧证据。
+`api.github.com.proxy=` 那个空值不是凑数的：实测它能把该主机从全局 `http.proxy` 里摘出来（不加它，全局死代理会让 `api.github.com` 变成「连不上代理」；加上就是 GitHub 自己的响应）。原因见第 9 节 —— `api.github.com` 走代理是 **403**，不能和 `github.com` 同档处理。
+
+**C. 只有你确实想常驻时才写配置**（只影响 `github.com` 这一个主机，不影响别的流量，但 `git config` 里会留一行）：
+
+```powershell
+git config --global "http.https://github.com.proxy" "http://127.0.0.1:7897"
+git config --global --unset "http.https://github.com.proxy"    # 撤销
+```
+
+> 诚实边界：网管的 cwd 在容器里，够不到这台 Windows 的文件系统，**上面三段 PowerShell 没有在实机执行过**。等价的 bash 逻辑（直连优先 / 代理重试 / 失败不静默 / `api.github.com` 摘出代理）已按上面两节实测。请把 **A 的 SHA** 和 **A 第二条（`--get-regexp proxy`）应无输出**这两份真实结果贴回 [CMP-4](/cmp/issues/CMP-4)，作为 Windows 侧证据；跑过 B 的话把 `git-sync ls-remote` 的输出一起贴上。
 
 ### 查延迟 / 切节点：现在做不到（如实记录，不含糊）
 
-- 从容器测控制器：`9090` 与 **`9097`（Clash Verge 默认端口）都 refused**，`curl` exit=7，1–3ms 内就被拒（无人监听）。同一时刻 `7897` 走 `-x` 实测 `https://github.com` → 200/3.7s。05:55、07:38、07:40 UTC 三个时间点结论一致：**`allow-lan` 放开的是代理口，不是控制器口**。
+- 从容器测控制器：`9090` 与 **`9097`（Clash Verge 默认端口）都 refused**，`curl` exit=7，1–3ms 内就被拒（无人监听）。同一时刻 `7897` 走 `-x` 实测 `https://github.com` → 200/3.7s。05:55、07:38、07:40、14:51 UTC 四个时间点结论一致：**`allow-lan` 放开的是代理口，不是控制器口**。
 - `scripts/git-sync.sh probe` 现在**同时探 `9097` 和 `9090`** 两个控制器端口（可用 `GIT_SYNC_CONTROLLER_CANDIDATES` 覆盖），并区分三种结果：`curl exit=7` 没监听 / `401`·`403` 已放开且在要 secret（期望状态）/ `200` 已放开但**没有 secret**（危险，立刻设 secret）。
 - 小坑记录：`curl http://<宿主>:7897/version` 返回 **400** 是正常的 —— `7897` 是 mixed 代理口，只接受带代理语义的请求，它不是控制器。查控制器要用 `curl http://<宿主>:<控制器端口>/version`，别拿这个 400 当「控制器通了」。
 - 端口别写死：要放开就改成 `0.0.0.0:<你的实际端口>` 并**同时设 `secret`**，改完重启核心。
 - 决定已下：布谷在 [CMP-3](/cmp/issues/CMP-3) 答「开」，并追问「设 secret 后自带 dashboard 还能用吗」，得得在 CMP-3 已回：Verge 自带面板由 app 自己带 secret，照常可用；**需要自己带 secret 的是第三方面板 / REST / WebSocket**。本卡不再重复收同一个决定（原确认卡 `cc687844` 已 withdraw）。网管不动用户本机的 Clash 配置。
-- 放开之后要补的证据是三条：`GET /version`、`GET /proxies`、`GET /proxies/{name}/delay`。在那之前不做「自动切出口节点」，git 这条链路只依赖 `7897` 是否可连，脚本的 probe 已经能证明这一点。
+- 放开之后要补的证据是三条：`GET /version`、`GET /proxies`、`GET /proxies/{name}/delay`（secret 只走 header，不进评论/文档/仓库）。在那之前不做「自动切出口节点」，git 这条链路只依赖 `7897` 是否可连，脚本的 probe 已经能证明这一点。
+- **这件事现在不催**：布谷 14:49 的决定是「先切换试试……然后关闭」，节点那半**已被按下**，不是本卡的待办，也不是本卡的阻塞项。谁想恢复它，直接在 CMP-3 说一句即可。
 
 ## 10. 「切到代理 → 访问谷歌 → 关闭」这条实测走通（2026-10-15 14:51–14:54 UTC）
 

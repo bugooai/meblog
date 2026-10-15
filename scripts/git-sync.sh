@@ -4,6 +4,7 @@
 # 设计约束（见 docs/RUN_LOCALLY.md 第 9 节）：
 #   - 直连 github 是按天抖，不是永久断，所以不能写死「永远走代理」。
 #   - 代理只绑到 URL scope（默认 https://github.com/），npm / pypi / 国内站点照常直连。
+#   - `api.github.com` 永远钉死直连：走代理不是慢，是被 GitHub 按出口 IP 拒（403）。
 #   - 不写任何 git config，用完零残留 —— 撤销方法就是不再调用本脚本。
 #   - 全部路径失败时非零退出并说明试过哪几条路，不静默。
 #
@@ -25,6 +26,9 @@ PROXY_CANDIDATES="${GIT_SYNC_PROXY_CANDIDATES-http://host.docker.internal:7897 h
 # 控制器端口不固定（Clash Verge 默认 9097，Clash 内核/多数配置默认 9090），所以两个都探
 CONTROLLER_CANDIDATES="${GIT_SYNC_CONTROLLER_CANDIDATES-host.docker.internal:9097 host.docker.internal:9090 192.168.65.254:9097 192.168.65.254:9090}"
 PROXY_URL_SCOPE="${GIT_SYNC_PROXY_URL_SCOPE-https://github.com/}"
+# api.github.com 走代理不是慢而是被 GitHub 按出口 IP 拒（403，10-15 14:51 实测），
+# 所以无论走哪条路都把它钉死直连；空值 = 禁用代理，实测能覆盖全局 http.proxy
+NEVER_PROXY_HOSTS="${GIT_SYNC_NEVER_PROXY_HOSTS-api.github.com}"
 LOW_SPEED_LIMIT="${GIT_SYNC_LOW_SPEED_LIMIT-1000}"
 DIRECT_LOW_SPEED_TIME="${GIT_SYNC_DIRECT_LOW_SPEED_TIME-20}"
 PROXY_LOW_SPEED_TIME="${GIT_SYNC_PROXY_LOW_SPEED_TIME-60}"
@@ -50,6 +54,10 @@ run_git() {
   local proxy="$2"
   shift 2
   local args=(-c "http.lowSpeedLimit=$LOW_SPEED_LIMIT" -c "http.lowSpeedTime=$low_speed_time")
+  local host
+  for host in $NEVER_PROXY_HOSTS; do
+    args+=(-c "http.https://${host}.proxy=")
+  done
   [ -n "$proxy" ] && args+=(-c "http.${PROXY_URL_SCOPE}.proxy=$proxy")
 
   LOG="$(mktemp "${TMPDIR:-/tmp}/git-sync.XXXXXX")"
