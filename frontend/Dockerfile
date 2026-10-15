@@ -12,7 +12,10 @@ ENV NEXT_PUBLIC_ENV=${NEXT_PUBLIC_ENV}
 ARG NEXT_PUBLIC_SITE_URL=
 ENV NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
 # 核心：启用 corepack 安装 pnpm（比 npm 快 5 倍！）
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# pin pnpm@9（pnpm 10+ 要求 Node 22+，和上面的 node:20-alpine 不兼容；
+# 且 pnpm 10+ 默认拒绝依赖的 build 脚本，--frozen-lockfile 在 CI 里直接
+# ERR_PNPM_IGNORED_BUILDS 失败：sharp@0.34.5 / unrs-resolver@1.11.1。2026-10-15 实测）
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 WORKDIR /app
 # 依赖缓存
 COPY package.json pnpm-lock.yaml ./
