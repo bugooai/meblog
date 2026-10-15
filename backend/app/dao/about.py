@@ -8,9 +8,19 @@ from app.services.storage import prepare_media_value
 
 
 class AboutDao:
+# 单例表读法必须确定性取一行：以前是 select(整表) + scalar_one_or_none()，
+# 而 get_or_create 没有跨数据库的锁 —— 前端首屏会同时打 /settings/site 和
+# /settings/seo，空表时两个请求都看到「没有」，于是各插一行。之后每一次读都会
+# 抛 MultipleResultsFound，整站设置接口永久 500（在本地空库上用新构建的首屏
+# 稳定复现）。按 created_at 取最早的一行：多出来的行读不到也不再报错，
+# 写操作也固定落在同一行上。
     @staticmethod
     async def get_author_settings(db: AsyncSession) -> AuthorProfile | None:
-        return (await db.execute(select(AuthorProfile))).scalar_one_or_none()
+        return (
+            await db.execute(
+                select(AuthorProfile).order_by(AuthorProfile.created_at, AuthorProfile.id).limit(1)
+            )
+        ).scalar_one_or_none()
 
     @staticmethod
     async def create_author_settings(db: AsyncSession, admin_id: str | None = None) -> AuthorProfile:
@@ -20,9 +30,14 @@ class AboutDao:
         await db.refresh(settings)
         return settings
 
+    # 同 app/dao/settings.py 的单例读法：并发建出来的多余行不能把接口打挂。
     @staticmethod
     async def get_site_settings(db: AsyncSession) -> SiteSettings | None:
-        return (await db.execute(select(SiteSettings))).scalar_one_or_none()
+        return (
+            await db.execute(
+                select(SiteSettings).order_by(SiteSettings.created_at, SiteSettings.id).limit(1)
+            )
+        ).scalar_one_or_none()
 
     @staticmethod
     async def create_site_settings(db: AsyncSession, admin_id: str | None = None) -> SiteSettings:
