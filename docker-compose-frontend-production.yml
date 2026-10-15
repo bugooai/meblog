@@ -11,6 +11,9 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_ENV: ${NEXT_PUBLIC_ENV:-production}
+        # NEXT_PUBLIC_* 只在 next build 那一刻被读走，必须走 build args；
+        # 只写进下面的 environment 是不够的。
+        NEXT_PUBLIC_SITE_URL: ${SITE_URL:-}
     image: meblog-frontend-prod:latest
     container_name: meblog-frontend-prod
     restart: unless-stopped
@@ -18,6 +21,17 @@ services:
       - "9001:3000"
     environment:
       - NEXT_PUBLIC_ENV=${NEXT_PUBLIC_ENV:-production}
+      # 运行时这一份是给服务端渲染 / ISR 再生成用的：metadataBase、canonical、
+      # sitemap、robots 里的地址都从这里的 SITE_URL 取。
+      # 值必须和后端 .env.production 的 SITE_URL 完全一致，否则 canonical 和
+      # 后端 /sitemap.xml 会各说一套。
+      - SITE_URL=${SITE_URL:-}
+      - NEXT_PUBLIC_SITE_URL=${SITE_URL:-}
+      # Next 服务端取数走容器间地址，别绕出容器再穿 nginx。
+      - SERVER_API_BASE_URL=${SERVER_API_BASE_URL:-http://memblog-backend-prod:8000/api/v1}
+      # 发文后即时刷新首页缓存用；必须等于后端 .env.production 的 FRONTEND_REVALIDATE_TOKEN。
+      # 留空 = 该接口一律 401，首页最长 180 秒后才更新。
+      - REVALIDATE_SECRET=${REVALIDATE_SECRET:-}
     networks:
       - common-network
 

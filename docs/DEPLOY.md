@@ -15,6 +15,41 @@
 | `/feed.xml` | 200，`<link>` 也全是 `http://localhost:3000/...` |
 | 首页 `<head>` | canonical / `og:*` / `twitter:*` / JSON-LD **一个都没有** |
 
+## 本次发版（2026-10-15，`main` <= `dev`）
+
+`origin/main` 之前停在 `b8e035f`，这次把 `dev` 整条历史快进合过去。线上要重新构建镜像才会拿到下面这些：
+
+| 变化 | 影响 |
+|---|---|
+| `SITE_URL` 没配时 sitemap/robots/RSS 全输出 `localhost` | 前端 `getSiteUrl()` 改成运行时 `SITE_URL` 优先，compose 把值接进容器 |
+| 首页 / 文章页没有任何 `og:` 和 JSON-LD | `WebSite` / `BlogPosting` / `BreadcrumbList` / `Person` 全部就位，og:image 有兜底 |
+| `/about` 是纯客户端页，服务端 HTML 里没有作者信息，还写死了一套别人的履历 | 改成服务端渲染 + `Person` JSON-LD，没配的栏目直接不渲染 |
+| 公开注册会白送管理员权限 | `is_admin` 由调用方决定，只有空库第一个账号是管理员；加管理员只能管理员来做 |
+| 新装的站只能用 curl 建第一个账号 | 登录页在账号表为空时显示「初始化站点」面板，建完自动登录进后台 |
+| 图片签名地址会过期 | 配了 `OSS_PUBLIC_BASE_URL` 就发永久地址（现在留空，行为不变） |
+
+服务器上按这个顺序做（我没有那台机的 SSH，这五步得你来，或者给我一条可用的通道）：
+
+```bash
+cd <仓库目录>
+git fetch origin && git checkout main && git merge --ff-only origin/main
+
+# 1) compose 插值用的根 .env（首次）
+cp .env.example .env && $EDITOR .env        # 至少把 SITE_URL 填对
+
+# 2) 后端自己的 env
+$EDITOR backend/.env.production             # SITE_URL + FRONTEND_REVALIDATE_URL/TOKEN
+ls frontend/.env*                           # 有 .env.local 就把 NEXT_PUBLIC_SITE_URL 从里面删掉（它会盖住 .env.production）
+
+# 3) 重建（前端必须 --build，后端只需重启）
+docker compose -f docker-compose-frontend-production.yml -p meblog-prod up -d --build
+docker compose -f docker-compose-backend-production.yml -p meblog-prod up -d
+
+# 4) 验证：见下面「配完怎么验」四条
+```
+
+**线上库已经有账号了，所以登录页不会显示初始化面板** —— 它只在账号表为空时出现（新部署或重装才用得上）。
+
 ## 两个独立问题
 
 ### 1）站点地址没配 —— 优先级最高
@@ -37,7 +72,20 @@ docker compose -f docker-compose-backend-production.yml -p meblog-prod up -d
 
 ### 2）线上跑的是旧构建，没有结构化数据
 
-首页没有任何 `og:` / JSON-LD，说明部署的是 `main`（`b8e035f`）那一版；`WebSite`/`BlogPosting`/`BreadcrumbList`、og:image 兜底这些在 `dev` 上（PR #3），你选的是「dev 先不合 main」，所以线上暂时不会有。要线上生效就得发一次版。
+首页没有任何 `og:` / JSON-LD，说明线上还是 `main`（`b8e035f`）那一版。`WebSite`/`BlogPosting`/`BreadcrumbList`、og:image 兜底、作者页 SSR、登录页初始化入口这些现在都已经在 `dev`，2026-10-15 你选了「发版」，`main` 已经合过去了 —— 见下面「本次发版」一节。**代码合上去只是第一步，线上不重新构建镜像就还是旧行为。**
+
+## 站点地址为什么光写 `.env.production` 不够（2026-10-15 实测）
+
+这次配 `SITE_URL` 踩到两个叠在一起的坑，都在前端：
+
+1. **`NEXT_PUBLIC_*` 是构建时烘进产物的字面量，运行时改环境变量对它无效。**
+   实测：容器里给了正确的 `SITE_URL`，`canonical` / `robots.txt` 仍然输出构建时烘进去的 `http://localhost:3000`。
+   现在 `frontend/app/lib/seo.ts` 的 `getSiteUrl()` 改成 **`SITE_URL` 优先、`NEXT_PUBLIC_SITE_URL` 兜底**：这些地址全都只在服务端渲染里用（`layout.tsx`、`robots.ts`、`sitemap.ts`、`/feed.xml`、文章页），服务端读得到普通环境变量，所以改成运行时说了算 —— 以后换域名不用再重构建镜像。浏览器端如果哪天要用，仍走 `NEXT_PUBLIC_`。
+2. **Next 读 env 文件的优先级是 `process.env` > `.env.production.local` > `.env.local` > `.env.production` > `.env`。**
+   也就是说服务器上 `frontend/` 里只要残留一个 `.env.local`，它就能盖住你精心写好的 `.env.production`。部署前 `ls frontend/.env*` 看一眼，`NEXT_PUBLIC_SITE_URL` 别留在 `.env.local` 里。
+
+compose 已经把两边都接上了（`docker-compose-frontend-production.yml`）：`build.args` 传 `NEXT_PUBLIC_SITE_URL`，`environment` 传运行时的 `SITE_URL` / `SERVER_API_BASE_URL` / `REVALIDATE_SECRET`，值从根目录 `.env` 插值（模板见 `.env.example`）。
+**后端 compose 故意没加 `SITE_URL`**：pydantic-settings 不会因为环境变量是空串就退回 `.env` 文件（`env_ignore_empty` 默认 False），传一条 `SITE_URL=` 反而会把 `backend/.env.production` 里配好的值清成空。后端继续只读它自己的 `.env.production`。
 
 ## 一个会咬人的坑：revalidate 走域名不通
 
@@ -129,5 +177,5 @@ curl -s -X POST http://meblog.bugooai.cn/api/v1/files/upload \
 1. **HTTPS 没上**：`https://meblog.bugooai.cn` 无响应。登录态是 cookie + JWT，明文 HTTP 上跑等于裸奔；而且微信/微博对 http 链接的抓取也不如 https 稳定。域名已经解析到机器上，套一层 certbot 就能解决。
 2. **备案**：`.cn` 域名走国内阿里云，80 端口能通说明要么备过、要么用了别的方式，上线前自己确认一下，别到时候被切断。
 3. **泄露口令**：那台机既是博客又跑着历史上写进源码的测试库（`...:6001/meblog_test`），端口现在还开不开得你确认；口令必须轮换。
-4. **`is_admin` 写死**：`backend/app/dao/admin.py:54`。现在靠 `ALLOW_REGISTRATION=false` 挡着，**千万别为了开放注册把它设成 true**，否则任何人都能注册成管理员。
+4. ~~**`is_admin` 写死**~~：已修（`fcebeb0`）。`AdminDao.create_admin` 的 `is_admin` 现在是必填参数，公开注册只在空库时给管理员，之后注册的一律是一般账号；加管理员只能由管理员走 `POST /api/v1/admins`。`ALLOW_REGISTRATION` 仍建议保持 false —— 不是怕提权，是一般账号目前除了登录没有任何专属能力。
 5. **两套 sitemap**：前端 `app/sitemap.ts` 和后端 `app/api/seo.py` 都在生成 sitemap/feed。域名上生效的是前端那份。留着两条路以后必然不一致，等你定留哪个。

@@ -10,8 +10,12 @@ export const FALLBACK_SITE_DESCRIPTION = '分享技术与生活的个人博客';
 export const DEFAULT_SITE_LOGO_URL = '/bugoo-logo.png?v=ahernli-round';
 
 
+// 顺序是 SITE_URL 在前：NEXT_PUBLIC_* 在 next build 那一刻就被替换成字面量烘进产物，
+// 运行时改环境变量对它无效（实测：容器里给了正确的 SITE_URL，canonical 仍然输出
+// 构建时烘进去的 localhost）。这些都是服务端渲染用的地址，服务端读得到普通
+// 环境变量，所以让运行时的 SITE_URL 赢；NEXT_PUBLIC_SITE_URL 留给浏览器端兜底。
 export function getSiteUrl(): string {
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || DEFAULT_SITE_URL;
+  const siteUrl = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || DEFAULT_SITE_URL;
   return siteUrl.replace(/\/+$/, '');
 }
 
