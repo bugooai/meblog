@@ -209,7 +209,6 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 | `codeload.github.com` | 随 `git clone`/release 下载一起抖 |
 | `objects.githubusercontent.com` | release/LFS 资源，同上 |
 | `api.github.com` | 一直没失败过，留着是因为它和上面同一条链路 |
-| `registry.npmjs.org` | 今天走代理抖了一次 `000`；直连一直稳 |
 
 ### 明确**不要**进白名单的（代理只会拖慢）
 
@@ -221,9 +220,78 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 | `meblog.bugooai.cn`（你自己的站） | 0.29s | 2.42s | 慢 8.3 倍，别代理 |
 | `www.baidu.com` | 0.20s | 1.66s | 慢 8.3 倍，别代理 |
 | `pypi.org` | 1.05s | 2.17s | 慢 2 倍，别代理 |
+| `registry.npmjs.org` | 1.26s，3 轮全绿 | 今天抖过一次 `000` 超时 | 走代理反而出问题，别代理 |
 
 10-14 那次 `pypi.org` 两条路都不通是**当天的抖动**，今天 3 轮 8 个目标 48 次请求全部成功（`uv` 因此现在可用）。所以别把「昨天不通」写成永久规则 —— 白名单要跟着实测走。
 
 ### 结论写法
 
 `git config --global http.https://github.com.proxy ...` 这种**按主机**的配置就是这里要的形态：只有 github.com 走代理，npm/国内站点照常。它不需要「用完切回来」，因为它本来就没切走别的流量。真要覆盖 `raw.githubusercontent.com` 之类，就为每个主机各写一条 `http.<url>.proxy`，别用 `http.proxy` 全局值。
+
+### 容器侧固化：`scripts/git-sync.sh`（直连优先，失败自动走代理）
+
+规则来自上面的实测：直连 github 是**按天抖**，不是永久断，所以不写死「永远走代理」，也不需要谁手动切来切回。脚本把参数原样透传给 `git`，只有直连**网络类**失败才按 URL scope 换代理重试一次。
+
+```bash
+scripts/git-sync.sh push origin dev
+scripts/git-sync.sh fetch --prune
+scripts/git-sync.sh ls-remote https://github.com/bugooai/meblog HEAD
+scripts/git-sync.sh probe          # 只测连通性，不动仓库
+```
+
+2026-10-15 05:55–06:05 UTC 在容器内实测：
+
+| 场景 | 命令 | 真实结果 |
+|---|---|---|
+| 直连通 | `scripts/git-sync.sh ls-remote …/meblog HEAD` | `b8e035fcb109d88ed25f7be7c35c8c8056458ebc HEAD`，3s，日志标「未使用代理」 |
+| 直连不通（模拟 10-14） | `GIT_SYNC_SKIP_DIRECT=1` 同上 | 自动走 `http://host.docker.internal:7897`，2s，**同一个 SHA** |
+| 真推一次（代理路径） | `GIT_SYNC_SKIP_DIRECT=1 scripts/git-sync.sh push origin HEAD:refs/heads/nonexistent-check-branch` | `* [new branch]`，4s，走 `7897` |
+| 真推一次（直连路径，收尾） | `scripts/git-sync.sh push origin --delete nonexistent-check-branch` | `- [deleted]`，7s，走直连；已确认远端无残留 |
+| 两条路都不通 | `GIT_SYNC_PROXY_CANDIDATES="http://127.0.0.1:1 http://127.0.0.1:2" …` | `rc=128`，列出试过的每一条路，**不静默成功** |
+| 非网络错误 | `… ls-remote …/definitely-not-a-repo-xyz-42 HEAD` | `Repository not found` → `rc=128` 原样冒泡，不用代理掩盖 |
+
+要点：
+
+- 代理只以 `-c http.https://github.com/.proxy=<url>` 的形式注入**当次命令**，npm / pypi / OSS / 你自己的站照常直连；跑完 `git config --global --get-regexp proxy` 仍然是空 —— **撤销方法就是不再调用脚本，零残留配置**。
+- 每条路径最坏约 21s 断开（这是 10-14 记录到的「TCP 超时 21s」，即内核 connect 超时；`http.lowSpeedTime` 管不到连接阶段，只兜住「连上了但传不动」）。三条路全挂最多约 60s，然后非零退出。
+- 认证失败 / 404 / non-fast-forward 一律不重试代理，避免把真实错误伪装成网络问题。
+- 脚本默认代理候选是 `host.docker.internal:7897` 再 `192.168.65.254:7897`：这台容器里 `host.docker.internal` 解析成 IPv6（`fdc4:f303:9324::254`），v6 首包实测 7.9s、v4 实测 2.4s，所以留了 IPv4 兜底。
+
+- 上表两条 push 测试是排障时的意外产物：本想用错误参数验证「非网络错误不重试」，结果 `--force-with-lease=nonsense` 被 git 当成合法 lease 名，分支真建出来了。已在同一个心跳里删除并验证（`git ls-remote --heads origin nonexistent-check-branch` 无输出）。顺带证明了代理与直连两条 push 路径都可用。
+
+### Windows 侧配方（PowerShell，可直接粘贴）
+
+**A. 常驻按主机代理**（最省事；只影响 `github.com`，别的流量照常，不需要「用完切回」）：
+
+```powershell
+git config --global "http.https://github.com.proxy" "http://127.0.0.1:7897"
+git ls-remote https://github.com/bugooai/meblog HEAD    # 验证：应该出 SHA
+git config --global --unset "http.https://github.com.proxy"    # 撤销
+```
+
+**B. 直连优先 + 失败自动走代理**（和容器侧同一条规则，写进 `$PROFILE` 后长期不用管）：
+
+```powershell
+function git-sync {
+  param([Parameter(ValueFromRemainingArguments = $true)]$GitArgs)
+  git @GitArgs
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[git-sync] 直连失败(rc=$LASTEXITCODE)，改用 Clash 代理重试一次"
+    git -c "http.https://github.com.proxy=http://127.0.0.1:7897" @GitArgs
+  }
+}
+```
+
+用法 `git-sync push origin dev`；一条验证命令：
+
+```powershell
+git-sync ls-remote https://github.com/bugooai/meblog HEAD
+```
+
+> 诚实边界：网管的 cwd 在容器里，够不到这台 Windows 的文件系统，**上面两段 PowerShell 没有在实机执行过**。等价的 bash 逻辑（直连优先 / 代理重试 / 失败不静默）已按上表实测。请把验证命令的真实输出贴回 [CMP-4](/cmp/issues/CMP-4) 评论，作为 Windows 侧证据。
+
+### 查延迟 / 切节点：现在做不到（如实记录，不含糊）
+
+- 从容器测控制器：`host.docker.internal:9090` 与 `192.168.65.254:9090` 都是 **Connection refused**（`curl` exit=7），同一时刻 `7897` 两条路都 OPEN（v6 200/7.9s，v4 200/2.4s）。结论和 10-15 05:55 那次一致：**`allow-lan` 放开的是代理口，不是控制器口**。
+- 要放开只能由布谷在本机改：`external-controller` 绑 `0.0.0.0:9090`（或 `:9090`），**并且同时设 `secret`**。不设 secret 就别开 —— 同局域网任何设备都能改路由。网管不动用户本机的 Clash 配置。
+- 放开之后要补的证据是三条：`GET /version`、`GET /proxies`、`GET /proxies/{name}/delay`。在那之前不做「自动切出口节点」，git 这条链路只依赖 `7897` 是否可连，脚本的 probe 已经能证明这一点。
