@@ -207,7 +207,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 
 ### 该走代理的域名（枚举，不是通配）
 
-只有这些**出过直连失败**，且失败的是「按天抖」。**`api.github.com` 不在其中 —— 见下面「禁止走代理」**（10-15 14:51 实测走代理是 403，不是慢）：
+只有这些**出过直连失败**，且失败的是「按天抖」。**`api.github.com` 不在其中 —— 见下面「禁止走代理」**（14:51 实测走代理返回 403，15:04 复测又变回 200：它是不稳定的，不是慢的问题）：
 
 | 域名 | 为什么进白名单 |
 |---|---|
@@ -228,7 +228,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 | `pypi.org` | 1.05s → 14:51 复测 0.70s | 2.17s → 14:51 复测 1.15s | 直连略快，同样**别写死方向** |
 | `registry.npmjs.org` | 0.90–2.34s（14:51 四轮） | 0.83–1.36s | **打平**。原「慢 2–8 倍，别代理」是单时刻样本，降级为「别写死方向」 |
 
-**禁止走代理（比「不要」更硬，会直接报错）**：`api.github.com` —— 14:51 实测直连 200/0.42s，走 `7897` **403**（GitHub 按出口 IP 拒）。所以哪天 `github.com` 挂了你手动强行走代理，也**只能给 `github.com` 这一个主机加代理**，`api.github.com`（REST、release 上传、部分认证流走它）必须留直连，否则 403 会打断流程。`scripts/git-sync.sh` 已把它钉死：任何一次调用都额外传 `-c http.https://api.github.com.proxy=`（空值 = 禁用该主机代理），`GIT_SYNC_NEVER_PROXY_HOSTS` 可覆盖。
+**禁止走代理（比「不要」更硬，会随机报错）**：`api.github.com` —— 14:51 走 `7897` 连续 **403**（GitHub 按出口 IP 拒），直连 200/0.42s；我 15:04 复测走代理又是 5/5 **200**（0.84–2.6s）、直连仍 200（0.29–0.42s）。所以正确的说法不是「代理必挂」，而是**换节点就可能随机 403，且直连更快**：一旦 403 会直接打断认证/上传，比慢严重得多。哪天 `github.com` 挂了你手动强行走代理，也**只能给 `github.com` 这一个主机加代理**，`api.github.com`（REST、release 上传、部分认证流走它）必须留直连。`scripts/git-sync.sh` 已把它钉死：任何一次调用都额外传 `-c http.https://api.github.com.proxy=`（空值 = 禁用该主机代理），`GIT_SYNC_NEVER_PROXY_HOSTS` 可覆盖。
 
 复测差异（2026-10-15 06:10 UTC，容器内）：`https://meblog.bugooai.cn` 现在**直连和走代理都失败**（`curl` exit=35，`SSL routines::unexpected eof while reading`，TLS 1.2/1.3 都一样），但 `http://meblog.bugooai.cn` 返回 200，443 TCP 也 OPEN。特征是「发出 Client Hello 后服务端不回应就断开」，属服务器 TLS/证书侧，**与代理无关，别据此改白名单**。上表那条 0.29s 应该是当时走的 80 或握手尚未坏。
 
@@ -240,7 +240,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 
 - **只有 `github.com` 进代理，`api.github.com` 绝不进**；npm / pypi / 国内站点照常直连。常驻写法不需要「用完切回」，因为它本来就没切走别的流量；要「用完就没了」就用一次性 `-c`，实测 `git config --global --get-regexp proxy` 与 `env` 里 `*_proxy` 都是 0 条。
 - **别用光秃的 scope**：`-c http.https://.proxy=<url>`（只写 scheme）实测**完全不生效** —— git 没走代理，报的是连 `github.com` 失败而不是连代理失败。所以按主机写不是风格问题，是能不能生效的问题。
-- **别用全局 `http.proxy`**：它会把 `api.github.com`、npm、OSS 一起拖进代理。实测 `-c http.proxy=http://127.0.0.1:1` 会让 `api.github.com` 变成「连不上 127.0.0.1」；再加上 `-c http.https://api.github.com.proxy=` 就恢复成 GitHub 自己的 403（直连），这就是脚本那条保险的原理。
+- **别用全局 `http.proxy`**：它会把 `api.github.com`、npm、OSS 一起拖进代理。实测 `-c http.proxy=http://127.0.0.1:1` 会让 `api.github.com` 变成「连不上 127.0.0.1」；再加上 `-c http.https://api.github.com.proxy=` 就恢复成 GitHub 自己的响应（当时是 403，15:04 复测是 200 —— 关键是**请求真的出到 GitHub 了，没被代理劫持**）。这就是脚本那条保险的原理。
 
 ### 容器侧固化：`scripts/git-sync.sh`（直连优先，失败自动走代理）
 
@@ -304,7 +304,7 @@ function git-sync {
 git-sync ls-remote https://github.com/bugooai/meblog HEAD    # 应该第 1 步直连就出 SHA
 ```
 
-`api.github.com.proxy=` 那个空值不是凑数的：实测它能把该主机从全局 `http.proxy` 里摘出来（不加它，全局死代理会让 `api.github.com` 变成「连不上代理」；加上就是 GitHub 自己的响应）。原因见第 9 节 —— `api.github.com` 走代理是 **403**，不能和 `github.com` 同档处理。
+`api.github.com.proxy=` 那个空值不是凑数的：实测它能把该主机从全局 `http.proxy` 里摘出来（不加它，全局死代理会让 `api.github.com` 变成「连不上代理」；加上就是 GitHub 自己的响应）。原因见第 9 节 —— `api.github.com` 走代理会**随机 403**（14:51 连续 403，15:04 又五连 200），不能和 `github.com` 同档处理。
 
 **C. 只有你确实想常驻时才写配置**（只影响 `github.com` 这一个主机，不影响别的流量，但 `git config` 里会留一行）：
 
@@ -351,6 +351,8 @@ git config --global --unset "http.https://github.com.proxy"    # 撤销
 对第 9 节那份枚举的一处**降级修正**：那里写「`registry.npmjs.org` 明确不要走代理（慢 2–8 倍）」，是**单时刻样本**。这轮 4 次采样 npm 是 0.90/1.19/2.34（直连）对 0.83/0.96/1.36（代理），基本打平。所以正确说法不是「npm 别走代理」，而是：**npm/pypi 这种两条路都在 1–2 秒内的目标，写死任何一条都是白亏** —— 这正是「直连优先 + 只有网络类失败才走代理」比手动开关更稳的原因。国内站（自有站、百度）走代理慢 2–9 倍这条仍然成立。
 
 新增一条硬结论（第 9 节没有的）：**`api.github.com` 走代理是 403**，不是慢，是被 GitHub 按出口 IP 拒。所以就算哪天 github 挂了要强行走代理，也只能给 `github.com` 这一个域名加代理，`api.github.com`（REST / 上传、GCM 认证走它）必须留直连。
+
+**网管复测（15:03–15:04 UTC，同一台容器）**：上面那条「`api.github.com` 走代理 403」我复测时**没有复现** —— 走代理 5/5 是 200（0.84–2.6s），直连 3/3 是 200（0.29–0.42s）。所以这条从「硬结论」降级为「**换节点会随机 403**」：它比慢更糟（会直接打断认证/上传），因此 `api.github.com` 仍然**禁止进代理**，脚本那条 `-c http.https://api.github.com.proxy=` 保险继续留着，但理由写对。顺带又抓到一次抖动：15:03 直连 `github.com` 同一分钟内 **一次 12s 超时 + 两次 0.86/1.00s 成功**，而同一时刻走代理是 4.9s/7.8s（也超时过一次 10s）。这就是「按分钟抖」而不是「按天抖」，也是直连优先 + 失败自动走代理比手动开关稳的原因。
 
 ### 手动复现这三步（bash / 容器内）
 
