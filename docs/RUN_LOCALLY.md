@@ -308,3 +308,59 @@ git-sync ls-remote https://github.com/bugooai/meblog HEAD
 - 端口别写死：要放开就改成 `0.0.0.0:<你的实际端口>` 并**同时设 `secret`**，改完重启核心。
 - 决定已下：布谷在 [CMP-3](/cmp/issues/CMP-3) 答「开」，并追问「设 secret 后自带 dashboard 还能用吗」，得得在 CMP-3 已回：Verge 自带面板由 app 自己带 secret，照常可用；**需要自己带 secret 的是第三方面板 / REST / WebSocket**。本卡不再重复收同一个决定（原确认卡 `cc687844` 已 withdraw）。网管不动用户本机的 Clash 配置。
 - 放开之后要补的证据是三条：`GET /version`、`GET /proxies`、`GET /proxies/{name}/delay`。在那之前不做「自动切出口节点」，git 这条链路只依赖 `7897` 是否可连，脚本的 probe 已经能证明这一点。
+
+## 10. 「切到代理 → 访问谷歌 → 关闭」这条实测走通（2026-10-15 14:51–14:54 UTC）
+
+布谷的要求是这一句：切到代理的时候访问谷歌，然后关闭。下面是容器内真实跑的三步，**每一步都留了证据**。
+
+### 先说结论
+
+- 「用完立马切回本地」在这套写法下**不需要人工做**：代理只以 `-c http.https://github.com.proxy=...` 注入当次命令，`git config` 一个字都没写。实测切完之后 `git config --global --get-regexp proxy` = **0 条**，`env` 里 `*_proxy` = **0 条**。
+- 但**谷歌本身不需要走代理**：同一时刻 `https://www.google.com/generate_204` 直连 **204 / 0.48s**，走代理 204 / 0.64s。要代理的从来只是 github 那一段（而且今天 github 直连更快，见下表）。
+- 出口确实换了：直连外网 IP `116.149.183.80`，走 `7897` 出去 `188.253.120.78`。所以「切到代理」是真的换了路径，不是自我安慰。
+
+### 复测数据（同机同刻，单位秒）
+
+| 目标 | 直连 | 走 `host.docker.internal:7897` | 读法 |
+|---|---|---|---|
+| `https://github.com` | **0.76 / 0.98** | 2.10 / 2.74 / 3.82 | 今天直连快 2–4 倍 → 直连优先是对的 |
+| `https://api.github.com` | **200 / 0.42** | **403** / 0.58–1.58 | GitHub 拦代理出口 IP：**这一条绝不能走代理** |
+| `https://www.google.com/generate_204` | 204 / 0.48 | 204 / 0.64 | 谷歌今天直连就通，不是非要代理 |
+| `https://www.youtube.com/` | 200 / 4.99 | 200 / 5.73 | 两边都慢，差异不在这条链上 |
+| `http://meblog.bugooai.cn/` | **0.35** | 3.34 | 自有站走代理慢约 9 倍 |
+| `https://www.baidu.com` | **0.17** | 1.28–1.50 | 国内站照常直连 |
+| `https://registry.npmjs.org/-/ping` | 0.90–2.34 | 0.83–1.36 | **打平，谁快不稳定** |
+| `https://pypi.org/simple/flask/`（HEAD） | **0.70** | 1.15 | 直连略快 |
+
+对第 9 节那份枚举的一处**降级修正**：那里写「`registry.npmjs.org` 明确不要走代理（慢 2–8 倍）」，是**单时刻样本**。这轮 4 次采样 npm 是 0.90/1.19/2.34（直连）对 0.83/0.96/1.36（代理），基本打平。所以正确说法不是「npm 别走代理」，而是：**npm/pypi 这种两条路都在 1–2 秒内的目标，写死任何一条都是白亏** —— 这正是「直连优先 + 只有网络类失败才走代理」比手动开关更稳的原因。国内站（自有站、百度）走代理慢 2–9 倍这条仍然成立。
+
+新增一条硬结论（第 9 节没有的）：**`api.github.com` 走代理是 403**，不是慢，是被 GitHub 按出口 IP 拒。所以就算哪天 github 挂了要强行走代理，也只能给 `github.com` 这一个域名加代理，`api.github.com`（REST / 上传、GCM 认证走它）必须留直连。
+
+### 手动复现这三步（bash / 容器内）
+
+```bash
+# 1) 切之前：确认没有残留
+git config --global --get-regexp proxy | wc -l    # 期望 0
+
+# 2) 切到代理，拉一次 github（只对本次命令生效）
+GIT_SYNC_SKIP_DIRECT=1 scripts/git-sync.sh ls-remote https://github.com/bugooai/meblog HEAD
+#   [git-sync] 重试：http://host.docker.internal:7897
+#   2f34820...  HEAD
+#   [git-sync] 成功：走 http://host.docker.internal:7897，1s（仅本次命令生效，未写 git config）
+
+# 3) 关闭 = 什么都不用做，再验一次残留 + 直连照常
+git config --global --get-regexp proxy | wc -l    # 仍然是 0
+scripts/git-sync.sh ls-remote https://github.com/bugooai/meblog HEAD
+#   [git-sync] 第 1 步：直连 … 成功：直连，1s，未使用代理
+```
+
+只想验证「代理这条路能不能出谷歌」，用 `curl -x` 就够了，它不会写任何配置：
+
+```bash
+curl -sS -x http://host.docker.internal:7897 -o /dev/null -w '%{http_code} %{time_total}s\n' https://www.google.com/generate_204
+curl -sS -x http://host.docker.internal:7897 https://api.ipify.org   # 出口 IP 变成节点的 IP
+```
+
+### 仍然做不到的那一半：切**节点**（不是切代理）
+
+14:51 UTC 复测，控制器 `9090` 与 `9097` 从容器都 refused（`curl exit=7`，1–3ms 内被拒）。所以「查节点延迟 / 自动挑节点」还是做不到 —— 要你在 Clash 里把 `external-controller` 改成 `0.0.0.0:<实际端口>` **并同时设 `secret`**，改完重启核心。放开后补三条证据即可：`GET /version`、`GET /proxies`、`GET /proxies/{name}/delay`（secret 只走 header）。布谷 14:49 的决定是「先切换试试……然后关闭」，节点那半按下了，先不催。
