@@ -174,8 +174,8 @@ curl -s -X POST http://meblog.bugooai.cn/api/v1/files/upload \
 
 ## 还没解决的（按影响排序）
 
-1. **HTTPS 没上**：`https://meblog.bugooai.cn` 无响应。登录态是 cookie + JWT，明文 HTTP 上跑等于裸奔；而且微信/微博对 http 链接的抓取也不如 https 稳定。域名已经解析到机器上，套一层 certbot 就能解决。
+1. **HTTPS 没上**：`https://meblog.bugooai.cn` 无响应。登录态是 cookie + JWT，明文 HTTP 上跑等于裸奔；而且微信/微博对 http 链接的抓取也不如 https 稳定。域名已经解析到机器上，套一层 certbot 就能解决 —— 目标配置见 `deploy/nginx/meblog.bugooai.cn.conf`，装/签/验/撤的完整步骤见 [HARDENING.md](HARDENING.md) 第 3 节（**先签再开 80→443 跳转**，顺序反了签不下来）。
 2. **备案**：`.cn` 域名走国内阿里云，80 端口能通说明要么备过、要么用了别的方式，上线前自己确认一下，别到时候被切断。
-3. **泄露口令**：那台机既是博客又跑着历史上写进源码的测试库（`...:6001/meblog_test`），端口现在还开不开得你确认；口令必须轮换。
+3. **泄露口令**：那台机既是博客又跑着历史上写进源码的测试库（`...:6001/meblog_test`），端口现在还开不开得你确认；口令必须轮换。2026-10-15 17:26 实测 `116.62.176.216:8200` **仍是公网可达的 PostgreSQL**（协议握手回包 `b'N'`，且拒绝 SSL = 口令明文过网），`ufw` 还是 `inactive`，公网可达性完全取决于阿里云安全组。改前基线、外部消费者怎么先确认、两种收口方案和撤销方法都在 [HARDENING.md](HARDENING.md) 第 1、4 节。
 4. ~~**`is_admin` 写死**~~：已修（`fcebeb0`）。`AdminDao.create_admin` 的 `is_admin` 现在是必填参数，公开注册只在空库时给管理员，之后注册的一律是一般账号；加管理员只能由管理员走 `POST /api/v1/admins`。`ALLOW_REGISTRATION` 仍建议保持 false —— 不是怕提权，是一般账号目前除了登录没有任何专属能力。
 5. **两套 sitemap**：前端 `app/sitemap.ts` 和后端 `app/api/seo.py` 都在生成 sitemap/feed。域名上生效的是前端那份。留着两条路以后必然不一致，等你定留哪个。

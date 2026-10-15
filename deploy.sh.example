@@ -16,46 +16,24 @@ fi
 # 服务器配置 - 从外部环境变量读取，不在脚本中硬编码
 : "${SERVER_IP:?Please export SERVER_IP}"
 : "${SERVER_USER:?Please export SERVER_USER}"
-: "${SERVER_PASS:?Please export SERVER_PASS}"
+# 用 SSH key 登录，别再用 sshpass 传口令：-p 后面的值在 ps 输出和 shell history 里都是明文可见的，
+# 而这台机的 root 口令已经因为被贴进工单正文泄露过一次（见 docs/HARDENING.md 第 4 节）。
+# SERVER_USER 建议用专用部署账号而不是 root（配套要改 sshd 的 PermitRootLogin）。
+: "${SERVER_KEY:?Please export SERVER_KEY=/path/to/deploy_key}"
 : "${PROJECT_ROOT:=/root/code/projects/meblog}"
 
 echo "=== 部署 meblog 到 $ENVIRONMENT 环境 ==="
 
-# 1. 推送到 Gitee（关闭代理）
-echo "1. 推送到 Gitee..."
-cd ~/code/skills/proxy-switcher && python enable_proxy.py disable
+# 1. 推送到 GitHub。代理只绑在 github.com 这一个 URL scope 上，不再全局开/关系统代理 ——
+#    全局代理会把 npm / pypi / 国内站点一起拐走，还容易用完忘了关。直连优先、网络类失败自动
+#    走代理重试一次的逻辑都在 scripts/git-sync.sh 里，它不写任何 git config，用完零残留。
+echo "1. 推送到 GitHub..."
 cd ~/code/projects/meblog
-git push gitee dev
+scripts/git-sync.sh push origin dev
 
-# 2. 推送到 GitHub（开启代理）
-echo "2. 推送到 GitHub..."
-cd ~/code/skills/proxy-switcher && python enable_proxy.py enable
-cd ~/code/projects/meblog
-
-# 使用重试机制推送 GitHub
-retry_count=0
-max_retries=3
-while [ $retry_count -lt $max_retries ]; do
-  if git push origin dev; then
-    echo "GitHub 推送成功！"
-    break
-  else
-    retry_count=$((retry_count + 1))
-    echo "GitHub 推送失败，重试 $retry_count/$max_retries..."
-    sleep 5
-    if [ $retry_count -eq $max_retries ]; then
-      echo "GitHub 推送失败，继续部署流程（Gitee 已同步）"
-    fi
-  fi
-done
-
-# 3. 关闭代理以访问服务器
-echo "3. 关闭代理以访问阿里云服务器..."
-cd ~/code/skills/proxy-switcher && python enable_proxy.py disable
-
-# 4. 在服务器上部署
-echo "4. 在服务器上部署 $ENVIRONMENT 服务..."
-sshpass -p "$SERVER_PASS" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "
+# 2. 在服务器上部署（访问阿里云一律直连，不走代理）
+echo "2. 在服务器上部署 $ENVIRONMENT 服务..."
+ssh -i "$SERVER_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$SERVER_USER@$SERVER_IP" "
   PROJECT_ROOT=\"$PROJECT_ROOT\"
   BASE_DIR=\$(dirname \"\$PROJECT_ROOT\")
   PROJECT_NAME=\$(basename \"\$PROJECT_ROOT\")
@@ -64,7 +42,9 @@ sshpass -p "$SERVER_PASS" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_I
   
   # 克隆或更新项目
   if [ ! -d \"\$PROJECT_NAME\" ]; then
-    git clone https://gitee.com/AhernLi-ai/meblog.git \"\$PROJECT_NAME\"
+    # remote 地址里不要嵌凭据：明文落在 .git/config 里，谁能读那个文件谁就能拿走它
+    # （服务器上现在那份 gitee origin 就是这个样子，见 docs/HARDENING.md 第 5 节）
+    git clone https://github.com/bugooai/meblog.git \"\$PROJECT_NAME\"
   else
     cd \"\$PROJECT_NAME\" && git reset --hard HEAD && git pull origin dev
   fi
@@ -113,9 +93,11 @@ sshpass -p "$SERVER_PASS" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_I
 
 echo "=== 部署完成！ ==="
 if [ "$ENVIRONMENT" = "test" ]; then
-  echo "测试环境:"
-  echo "后端 API: http://$SERVER_IP:8000/docs"
-  echo "前端应用: http://$SERVER_IP:8001"
+  # 刻意不把 http://$SERVER_IP:8000/docs 和 :8001 当成「部署成功」打印出来：把 Swagger 挂在
+  # 公网上等于把整份接口清单送给陌生人，那两个端口本来就不该对 0.0.0.0 开放。
+  # 看测试站请用 SSH 隧道，浏览器开 http://127.0.0.1:18001。
+  echo "测试环境已部署（compose 端口应绑 127.0.0.1，公网侧由安全组关掉，见 docs/HARDENING.md 第 2 节）"
+  echo "本地查看: ssh -i \"\$SERVER_KEY\" -N -L 18001:127.0.0.1:8001 -L 18000:127.0.0.1:8000 $SERVER_USER@$SERVER_IP"
 else
-  echo "生产环境已部署，请配置域名和 HTTPS"
+  echo "生产环境已部署。域名与 HTTPS 见 deploy/nginx/meblog.bugooai.cn.conf 和 docs/HARDENING.md 第 3 节"
 fi
