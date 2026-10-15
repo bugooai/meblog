@@ -222,6 +222,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代�
 | `pypi.org` | 1.05s | 2.17s | 慢 2 倍，别代理 |
 | `registry.npmjs.org` | 1.26s，3 轮全绿 | 今天抖过一次 `000` 超时 | 走代理反而出问题，别代理 |
 
+复测差异（2026-10-15 06:10 UTC，容器内）：`https://meblog.bugooai.cn` 现在**直连和走代理都失败**（`curl` exit=35，`SSL routines::unexpected eof while reading`，TLS 1.2/1.3 都一样），但 `http://meblog.bugooai.cn` 返回 200，443 TCP 也 OPEN。特征是「发出 Client Hello 后服务端不回应就断开」，属服务器 TLS/证书侧，**与代理无关，别据此改白名单**。上表那条 0.29s 应该是当时走的 80 或握手尚未坏。
+
 10-14 那次 `pypi.org` 两条路都不通是**当天的抖动**，今天 3 轮 8 个目标 48 次请求全部成功（`uv` 因此现在可用）。所以别把「昨天不通」写成永久规则 —— 白名单要跟着实测走。
 
 ### 结论写法
