@@ -9,6 +9,13 @@ import { useAuth } from '@/context/AuthContext';
 
 type Mode = 'login' | 'bootstrap';
 
+// 后端失败时 detail 是给人看的短句，直接顶到界面上；拿不到就当通用失败，
+// 不把 axios 的错误形状漏给界面。
+function errorDetail(error: unknown): string | null {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  return typeof detail === 'string' && detail ? detail : null;
+}
+
 // 站里还没有任何账号时，登录是不可能的：必须先有一个管理员。
 // 这个面板只做一件事——把「第一个账号」的创建入口从 curl 挪到页面上。
 // 后端才是唯一裁判：空库的第一个注册才是管理员，一旦有了账号这里就消失，
@@ -34,8 +41,8 @@ export default function LoginForm({ needsBootstrap }: { needsBootstrap: boolean 
   const loginMutation = useMutation({
     mutationFn: async () => authApi.login({ username, password }),
     onSuccess: (data) => enter(data.access_token),
-    onError: (err: any) => {
-      setError(err.response?.data?.detail || '登录失败');
+    onError: (error) => {
+      setError(errorDetail(error) || '登录失败');
     },
   });
 
@@ -47,9 +54,8 @@ export default function LoginForm({ needsBootstrap }: { needsBootstrap: boolean 
       return authApi.login({ username, password });
     },
     onSuccess: (data) => enter(data.access_token),
-    onError: (err: any) => {
-      const detail = err.response?.data?.detail;
-      setError(typeof detail === 'string' ? detail : '初始化失败');
+    onError: (error) => {
+      setError(errorDetail(error) || '初始化失败');
     },
   });
 
