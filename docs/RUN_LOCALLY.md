@@ -182,25 +182,39 @@ Invoke-RestMethod http://127.0.0.1:3000/api/v1/posts
 
 所以「api.github.com 通」不等于「能 git push」，两件事分开测。
 
-只给 github.com 配代理，别的流量照常，也不需要用完手动切回：
+你本机该用哪条？看第 9 节 **A**（一次性）或 **B**（写进 `$PROFILE` 的 `git-sync` 函数）。两段都只用 `-c` 把代理注入**当次命令**，跑完什么都不留，所以「切过去再切回来」这个问题根本不存在 —— 容器侧同理，由 `scripts/git-sync.sh` 自动做，不需要你管。
+
+下面这两种「写进 git 配置文件」的旧写法**不推荐，留在这里只作反例**（它们会留下需要你手动清理的一行）：
 
 ```powershell
-# 你本机（Windows + Clash）
+# 反例 1：写全局配置。虽然也只影响 github.com 一个主机，但它会留一行残留，
+# 得记得手动 --unset 才干净；这就是第 9 节 C 段，只有你真想常驻时才用
 git config --global http.https://github.com.proxy http://127.0.0.1:7897
-git config --global --unset http.https://github.com.proxy   # 撤销
 ```
 
 ```bash
-# 容器里（Paperclip agent 环境），写在仓库级就够
+# 反例 2：仓库级 remote.origin.proxy。只影响 origin 一个 remote，
+# 又和脚本的「当次注入」叠在一起，排查时看不出这次到底走了哪条路
 git config remote.origin.proxy http://host.docker.internal:7897
-git config --unset remote.origin.proxy                      # 撤销
 ```
 
-端口以你 Clash 的 mixed 端口为准（这里是 7897；常见默认还有 7890）。验证：
+端口以你 Clash 的 mixed 端口为准（这里是 7897；常见默认还有 7890）。你本机要验证就两条，一条看能不能出 SHA，一条看有没有留残留：
 
-```bash
-git ls-remote https://github.com/bugooai/meblog HEAD   # 应该出 SHA
-curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com   # 不该被代理拖慢
+```powershell
+git -c "http.https://github.com.proxy=http://127.0.0.1:7897" ls-remote https://github.com/bugooai/meblog HEAD
+#   ^ 应该出一行 SHA + HEAD
+
+git config --global --get-regexp proxy
+#   ^ 应该【什么都不显示】，这就是「自动关闭、零残留」的证据
+```
+
+第 9 节 A 段的第一条比这里多一个 `-c "http.https://api.github.com.proxy="`，那只是保险（把你本机可能存在的**全局**代理对 `api.github.com` 摘出去）；只测 github 推拉的话上面这两条就够。
+
+PowerShell 里别用裸 `curl` 测别的站有没有被拖慢 —— 它是 `Invoke-WebRequest` 的别名，参数不一样。用 `curl.exe`：
+
+```powershell
+curl.exe -s -o NUL -w "%{http_code} %{time_total}\n" https://www.baidu.com
+#   ^ 应该是 200 并且 1 秒内；变成几秒说明代理范围写大了
 ```
 
 外部控制器**只监听 `external-controller` 绑的地址**，默认在 Windows 的 `127.0.0.1` 上，所以从容器连它一定会被拒；而且**端口不是固定的 9090**（Clash Verge 默认 `9097`，Clash 内核/多数订阅配置默认 `9090`，以你自己配置里写的为准）。第 9 节有 2026-10-15 的实测更正：开 `allow-lan` 并不会顺带放开控制器。
@@ -298,7 +312,7 @@ scripts/git-sync.sh probe          # 只测连通性，不动仓库
 
 按 10-15 14:55 的验收口径重排：**A/B 都是 `-c` 一次性注入，不写任何配置文件**，所以「关闭」这一步天然不需要人工（实测 `git config --global --get-regexp proxy` 与 `env` 里 `*_proxy` 都是 0 条）。C 才是要常驻的情况，但它就不算零残留了。
 
-**A. 一次性走代理拉一次 github（先跑这条取证）**：
+**A. 一次性走代理拉一次 github（先跑这条取证）**：（第 8 节末尾那两条是它的最短形式，去掉保险也能用；这里带保险是防你本机已经有全局代理。）
 
 ```powershell
 git -c "http.https://api.github.com.proxy=" -c "http.https://github.com.proxy=http://127.0.0.1:7897" ls-remote https://github.com/bugooai/meblog HEAD
