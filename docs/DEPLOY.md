@@ -186,6 +186,7 @@ curl -s -X POST http://meblog.bugooai.cn/api/v1/files/upload \
 
 - 地址用 **`http://meblog.bugooai.cn/login`**。是 `http` 不是 `https`：443 没人监听（见下面「还没解决的」第 1 条）。直接开 `/admin` 在未登录时会回落成站点首页，那不是坏了。
 - 用户名填 `admin`，**填邮箱也一样能过**：接口先按用户名查，查不到再按邮箱查（`backend/app/services/auth.py:79-81`）。
+- **别去试「默认口令」**：仓库里（连 6 月那份导入提交 `e276dd4` 一起查过）没有任何生产默认口令。测试夹具里的 `admin123` 只活在 `backend/tests/` 的临时库里，不是你线上那个账号的口令。
 
 ### 真进不去：先只读诊断，别先改数据
 
