@@ -46,7 +46,7 @@ class TestListPosts:
         assert len(data["items"]) == 5
 
     def test_list_posts_only_published_for_anonymous(self, client, admin_user, admin_headers, db):
-        """Test that anonymous users only see published posts."""
+        """Unpublished posts need include_unpublished, and the flag needs an admin token."""
         from app.models import Post
         # Create published and draft posts with unique slugs
         for i, status in enumerate(["published", "draft", "published"]):
@@ -66,11 +66,24 @@ class TestListPosts:
         data = response.json()
         assert data["total"] == 2  # Only published
 
-        # Authenticated user
+        # A token alone does not widen visibility: drafts stay out of the default list.
         response = client.get("/api/v1/posts", headers=admin_headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 3  # All posts
+        assert data["total"] == 2
+        assert "post-draft-1" not in [item["slug"] for item in data["items"]]
+
+        # Admin + include_unpublished is the only combination that returns the draft.
+        response = client.get("/api/v1/posts?include_unpublished=true", headers=admin_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 3
+        assert "post-draft-1" in [item["slug"] for item in data["items"]]
+
+        # The flag must not leak drafts to anonymous callers.
+        response = client.get("/api/v1/posts?include_unpublished=true")
+        assert response.status_code == 200
+        assert response.json()["total"] == 2
 
     def test_list_posts_filter_by_project(self, client, admin_user, admin_headers, db, test_project):
         """Test filtering posts by project."""
@@ -152,10 +165,22 @@ class TestGetPost:
         assert response.status_code == 200
         assert response.json()["title"] == "Slug Post"
 
-    def test_get_post_with_null_updated_at(self, client, admin_user, db):
-        """Legacy rows with null updated_at should still be readable."""
-        from sqlalchemy import text
+    def test_updated_at_falls_back_to_created_at(self, admin_user, db):
+        """A row whose updated_at is missing still renders, dated by created_at.
+
+        The HTTP version of this case is no longer constructible: migration 013
+        (backend/migrations/sql/013_enforce_posts_timestamps_not_null.sql) backfilled
+        NULL updated_at with created_at and then set NOT NULL, so
+        `UPDATE posts SET updated_at = NULL` now fails on the constraint itself.
+        The same rule lives on in the response builder
+        (backend/app/services/post.py:45-47) and still covers an app running ahead
+        of an unmigrated schema, so it is asserted against that builder directly,
+        with the legacy row kept detached so nothing can flush it back to the table.
+        """
+        import asyncio
         from app.models import Post
+        from app.services.post import PostService
+        from tests.conftest import AsyncSessionAdapter
 
         post = Post(
             title="Legacy Timestamp Post",
@@ -166,18 +191,31 @@ class TestGetPost:
         )
         db.add(post)
         db.commit()
+        db.refresh(post)
+        created_at = post.created_at
 
-        db.execute(
-            text("UPDATE posts SET updated_at = NULL WHERE id = :post_id"),
-            {"post_id": post.id},
+        legacy_row = Post(
+            id=post.id,
+            title=post.title,
+            slug=post.slug,
+            content=post.content,
+            status=post.status,
+            user_id=post.user_id,
+            project_id=post.project_id,
+            created_by=post.created_by,
+            updated_by=post.updated_by,
+            view_count=post.view_count,
+            like_count=post.like_count,
+            created_at=created_at,
+            updated_at=None,
         )
-        db.commit()
 
-        response = client.get("/api/v1/posts/legacy-null-updated-at")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["slug"] == "legacy-null-updated-at"
-        assert data["updated_at"] is not None
+        data = asyncio.run(PostService._to_post_response(AsyncSessionAdapter(db), legacy_row))
+
+        assert data.slug == "legacy-null-updated-at"
+        assert data.updated_at is not None
+        assert data.updated_at == created_at
+        assert data.created_at == created_at
 
     def test_get_post_not_found(self, client):
         """Test getting a non-existent post."""
@@ -200,8 +238,8 @@ class TestGetPost:
         response = client.get("/api/v1/posts/draft-post")
         assert response.status_code == 404
 
-    def test_get_draft_post_authenticated(self, client, admin_user, admin_headers, db):
-        """Test that authenticated users can see draft posts."""
+    def test_get_draft_post_needs_include_unpublished(self, client, admin_user, admin_headers, db):
+        """Draft detail needs include_unpublished; the token alone, or the flag alone, is a 404."""
         from app.models import Post
         post = Post(
             title="Draft Post",
@@ -214,8 +252,19 @@ class TestGetPost:
         db.commit()
 
         response = client.get("/api/v1/posts/draft-post", headers=admin_headers)
+        assert response.status_code == 404
+
+        # Admin token + the explicit flag is what the admin UI sends (see
+        # frontend/app/admin/posts/[id]/edit/page.tsx), and it returns the draft.
+        response = client.get(
+            "/api/v1/posts/draft-post?include_unpublished=true", headers=admin_headers
+        )
         assert response.status_code == 200
         assert response.json()["title"] == "Draft Post"
+
+        # The flag on its own must not expose the draft to the public.
+        response = client.get("/api/v1/posts/draft-post?include_unpublished=true")
+        assert response.status_code == 404
 
 
 class TestCreatePost:
