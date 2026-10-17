@@ -15,14 +15,24 @@
 | `/feed.xml` | 200，`<link>` 也全是 `http://localhost:3000/...` |
 | 首页 `<head>` | canonical / `og:*` / `twitter:*` / JSON-LD **一个都没有** |
 
-## 合入口径（2026-10-17 起，github 侧第一份 CI）
+## 合入口径（2026-10-17 起，github 侧 CI）
 
 - `dev` → `main` 仍然只做 `git merge --ff-only`（CMP-7 已经按这条路走过一次，不改这里的口径）。
-- ff 之前先看 CI：**`origin/dev` 最新提交那个 run 必须绿**。文件是 `.github/workflows/ci.yml`，现在里面只有一条 job：容器名拼写门禁。
-- 合入前本地复跑同一条命令，别等 Action 告诉你：`bash scripts/check-container-name-spelling.sh`。
-- CI 红就不合。真要例外，先在工单上写清理由再动门禁；不要为了让 CI 变绿去放宽匹配或整目录排除。
-- 它拦的就是这类改动：compose 引用侧的服务名多写了一个字母 m，和 `container_name` 对不上 —— DNS 要等约 2 秒才回 SERVFAIL，页面照样 200，只是每个 SSR 请求白等一次（线上 `/` 因此 4.02 秒，`5cc24e6` 一次修掉 15 处）。
-- ruff / eslint / tsc 还没进 CI：这三个在 github 侧从没跑过，先把各自基线跑通再一条一条加进来，见 CMP-14。
+- ff 之前先看 CI：**`origin/dev` 最新提交那个 run 必须绿**。文件是 `.github/workflows/ci.yml`，现在里面两条 job：
+
+| job | 拦什么 | 本地复跑同一条命令 | `timeout-minutes` |
+|---|---|---|---|
+| 容器名拼写门禁 | compose 引用侧的服务名和 `container_name` 对不上（引用侧多一个 m 那个旧拼法） | `bash scripts/check-container-name-spelling.sh` | 5 |
+| 前端类型检查 | 前端 TS/TSX 的类型错；顺带挡住「改了依赖没提交锁文件」 | `bash scripts/check-frontend-types.sh`（冷启动加 `--install`） | 10 |
+
+- 两条 job 各自独立、各有各的 timeout：类型检查要冷装 545 个包再跑全量 `tsc`，比拼写门禁慢一个量级，挤在一个 job 里等于让 4 秒能跑完的门禁陪着等几分钟。
+- 合入前本地把这两条都跑一遍，别等 Action 告诉你。检查逻辑都在 `scripts/` 里，CI 调的就是同一条命令，口径不会漂。
+- CI 红就不合。真要例外，先在工单上写清理由再动门禁；不要为了让 CI 变绿去放宽匹配、整目录排除、关 `tsconfig` 的 `strict`，或者往源码里塞 `@ts-ignore`。
+- 拼写门禁拦的就是这类改动：compose 引用侧的服务名多写了一个字母 m，和 `container_name` 对不上 —— DNS 要等约 2 秒才回 SERVFAIL，页面照样 200，只是每个 SSR 请求白等一次（线上 `/` 因此 4.02 秒，`5cc24e6` 一次修掉 15 处）。
+- 类型检查为什么要先 `next typegen`：`frontend/next-env.d.ts` 里 import 了 `.next/types/routes.d.ts`，而 `.next/` 不进 git，CI 冷 checkout 没有这份路由类型；`tsconfig.json` 的 include 又带了 `.next/types/**/*.ts`。脚本里已经带上这一步，本地不用手动跑。
+- 前端工具链版本：CI 钉 **pnpm 12.11.2 + node 24**，装依赖只用 `pnpm install --frozen-lockfile`。**别往 `frontend/package.json` 里加 `packageManager` 字段** —— 2026-10-17 实测，加上之后 `--frozen-lockfile` 会直接报 `ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE`（pnpm 12 要把这个字段记进锁文件，于是认定现有锁文件过期），版本只能在 workflow 里钉。理由和实测过程写在 `ci.yml` 那一步的注释里。
+- 两条 job 的失败信息都只给 `path:line:col`，不回显命中的源码行 —— 仓库和 Action 日志都是公开的。
+- eslint / ruff 还没进 CI：eslint 基线没量出来（`eslint .` 在共享盘的工作区 240 秒没跑完，exit 124 是我们自己 timeout 的），ruff 连依赖和 `[tool.ruff]` 配置都还没有。各自量完基线再一条一条加进来，见 CMP-15。
 
 ## 本次发版（2026-10-15，`main` <= `dev`）
 

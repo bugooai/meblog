@@ -1,12 +1,19 @@
-# github 侧第一份 CI（2026-10-17，CMP-14）。
+# github 侧 CI（首版 2026-10-17，CMP-14；第二条 job 同日加，CMP-15）。
 #
-# 现在只有一条 job：容器名拼写门禁。口径、例外、修法都写在脚本里，
-# 本地复跑和 CI 完全同一条命令：
-#   bash scripts/check-container-name-spelling.sh
+# 口径：检查逻辑一律放 scripts/ 里，本地和 CI 跑同一条命令，不写在 workflow 的 inline run 里。
+# 一条卡只加一条 job —— 首次落地就红一片的门禁等于没有门禁。
 #
-# ruff / eslint / tsc 三个 job 故意没写进来：这三个在 github 侧从没跑过，
-# 首次落地一定红一片（后端连 ruff 依赖和配置都没有，前端 lint 基线未知），
-# 会和「合入前 CI 必须绿」这条新口径互相挡路。先把基线单独跑通，再一条一条进来。
+# 现在两条 job：
+#   1) container-name-spelling —— 容器名拼写门禁（bash scripts/check-container-name-spelling.sh）
+#   2) frontend-typecheck     —— 前端类型检查（bash scripts/check-frontend-types.sh）
+#
+# eslint / ruff 还没进来，各自基线量出来之前不进：
+#   - eslint：配置是齐的（frontend/eslint.config.mjs，eslint 9 + eslint-config-next），
+#     但 `npm run lint` 的脚本是光秃秃一个 `eslint`，不带文件参数；`eslint .` 在共享盘的
+#     工作区 240 秒没跑完（exit 124 是我们自己 timeout 的，不是它报错）。
+#     今天有多少 error / warning 还不知道，先量再决定是「一次清零」还是「只管新改动」。
+#   - ruff：backend/pyproject.toml 里 dependencies、[dependency-groups].dev 都没有 ruff，
+#     也没有 [tool.ruff] 段 —— 等于要先造工具链 + 选规则集，第一次跑必然红一片。
 name: CI
 
 on:
@@ -34,3 +41,45 @@ jobs:
 
       - name: 禁旧拼法（引用侧多一个 m 的那个）
         run: bash scripts/check-container-name-spelling.sh
+
+  frontend-typecheck:
+    name: 前端类型检查（tsc --noEmit）
+    runs-on: ubuntu-latest
+    # 单独一条 job、单独一个 timeout，不和 5 分钟的拼写门禁挤在一起：
+    # 这条要冷装 545 个包 + 跑一遍全量 tsc，比拼写门禁慢一个量级。
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm 版本在这里钉死，不去 frontend/package.json 里加 packageManager 字段。
+      # 2026-10-17 实测：加上 "packageManager": "pnpm@12.11.2" 之后，
+      #   pnpm install --frozen-lockfile
+      # 直接报 ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE
+      # （"Cannot update packageManagerDependencies with frozen-lockfile"）——
+      # pnpm 12 要把 packageManager 记进锁文件，于是认定现有锁文件已过期。
+      # 不加字段、只在这里钉版本，锁文件一个字都不用动（同一次实测：不加字段时
+      # --frozen-lockfile 通过，且 frontend/pnpm-lock.yaml 前后逐字节一致）。
+      # 要升 pnpm 就改这一行，同时确认 frontend/pnpm-lock.yaml 的 lockfileVersion
+      # （现在是 9.0，pnpm 9/10/11/12 都认）新版本还认。
+      - name: 装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      # node-version 和实测那台开发机对齐（node v24.21.0）；frontend/package.json 只写了
+      # engines.node >=18，Next 16 实际要更高，跟着实测环境走比跟着 engines 走稳。
+      # cache: pnpm 要求 pnpm 已经装好，所以上一步必须在它前面。
+      - name: 装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: 装依赖（锁文件对不上就直接红，不自动改锁）
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查（和本地同一条命令，口径写在脚本里）
+        run: bash scripts/check-frontend-types.sh
