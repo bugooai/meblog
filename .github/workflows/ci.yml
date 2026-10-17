@@ -46,34 +46,38 @@ jobs:
     name: 前端类型检查（tsc --noEmit）
     runs-on: ubuntu-latest
     # 单独一条 job、单独一个 timeout，不和 5 分钟的拼写门禁挤在一起：
-    # 这条要冷装 545 个包 + 跑一遍全量 tsc，比拼写门禁慢一个量级。
+    # 这条要冷装 543 个包 + 跑一遍全量 tsc，比拼写门禁慢一个量级。
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # pnpm 版本在这里钉死，不去 frontend/package.json 里加 packageManager 字段。
-      # 2026-10-17 实测：加上 "packageManager": "pnpm@12.11.2" 之后，
-      #   pnpm install --frozen-lockfile
-      # 直接报 ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE
-      # （"Cannot update packageManagerDependencies with frozen-lockfile"）——
-      # pnpm 12 要把 packageManager 记进锁文件，于是认定现有锁文件已过期。
-      # 不加字段、只在这里钉版本，锁文件一个字都不用动（同一次实测：不加字段时
-      # --frozen-lockfile 通过，且 frontend/pnpm-lock.yaml 前后逐字节一致）。
-      # 要升 pnpm 就改这一行，同时确认 frontend/pnpm-lock.yaml 的 lockfileVersion
-      # （现在是 9.0，pnpm 9/10/11/12 都认）新版本还认。
+      # 工具链版本跟 frontend/Dockerfile 对齐（node:20-alpine + pnpm@9.15.9），
+      # 不跟开发机对齐：这条 job 要检查的是「将要装进镜像发出去的那份依赖树」，
+      # 版本一致才谈得上门禁。要升就两边一起升。
+      #
+      # 为什么不能顺手升到 pnpm 12（开发机上是 12.11.2）—— 2026-10-17 两条都实测过：
+      #   1) 装依赖直接红：pnpm 10+ 默认拒绝跑依赖的 build 脚本，
+      #      `pnpm install --frozen-lockfile` 报 ERR_PNPM_IGNORED_BUILDS
+      #      （Ignored build scripts: sharp@0.34.5, unrs-resolver@1.11.1）。
+      #      Dockerfile 第 15-17 行的注释就是 2026-10-15 踩的同一个坑，别再踩一遍。
+      #      真要放行得逐个决定谁能跑 postinstall（--allow-build / onlyBuiltDependencies），
+      #      那是供应链决定，会连带影响生产镜像，不该在一条 CI 卡里顺手做掉。
+      #   2) 也不要在 frontend/package.json 里加 packageManager 字段来钉版本：
+      #      实测加上 "packageManager": "pnpm@12.11.2" 之后 --frozen-lockfile 直接报
+      #      ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE（pnpm 12 要把这个字段记进
+      #      锁文件，于是认定现有锁文件过期）。不加字段时 --frozen-lockfile 通过，
+      #      且 frontend/pnpm-lock.yaml 前后逐字节一致 —— 所以版本只钉在这里。
       - name: 装 pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 12.11.2
+          version: 9.15.9
 
-      # node-version 和实测那台开发机对齐（node v24.21.0）；frontend/package.json 只写了
-      # engines.node >=18，Next 16 实际要更高，跟着实测环境走比跟着 engines 走稳。
       # cache: pnpm 要求 pnpm 已经装好，所以上一步必须在它前面。
       - name: 装 Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
