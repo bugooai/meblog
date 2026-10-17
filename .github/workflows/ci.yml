@@ -1,0 +1,36 @@
+# github 侧第一份 CI（2026-10-17，CMP-14）。
+#
+# 现在只有一条 job：容器名拼写门禁。口径、例外、修法都写在脚本里，
+# 本地复跑和 CI 完全同一条命令：
+#   bash scripts/check-container-name-spelling.sh
+#
+# ruff / eslint / tsc 三个 job 故意没写进来：这三个在 github 侧从没跑过，
+# 首次落地一定红一片（后端连 ruff 依赖和配置都没有，前端 lint 基线未知），
+# 会和「合入前 CI 必须绿」这条新口径互相挡路。先把基线单独跑通，再一条一条进来。
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container-name-spelling:
+    name: 容器名拼写门禁
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 禁旧拼法（引用侧多一个 m 的那个）
+        run: bash scripts/check-container-name-spelling.sh

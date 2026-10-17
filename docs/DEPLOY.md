@@ -15,6 +15,15 @@
 | `/feed.xml` | 200，`<link>` 也全是 `http://localhost:3000/...` |
 | 首页 `<head>` | canonical / `og:*` / `twitter:*` / JSON-LD **一个都没有** |
 
+## 合入口径（2026-10-17 起，github 侧第一份 CI）
+
+- `dev` → `main` 仍然只做 `git merge --ff-only`（CMP-7 已经按这条路走过一次，不改这里的口径）。
+- ff 之前先看 CI：**`origin/dev` 最新提交那个 run 必须绿**。文件是 `.github/workflows/ci.yml`，现在里面只有一条 job：容器名拼写门禁。
+- 合入前本地复跑同一条命令，别等 Action 告诉你：`bash scripts/check-container-name-spelling.sh`。
+- CI 红就不合。真要例外，先在工单上写清理由再动门禁；不要为了让 CI 变绿去放宽匹配或整目录排除。
+- 它拦的就是这类改动：compose 引用侧的服务名多写了一个字母 m，和 `container_name` 对不上 —— DNS 要等约 2 秒才回 SERVFAIL，页面照样 200，只是每个 SSR 请求白等一次（线上 `/` 因此 4.02 秒，`5cc24e6` 一次修掉 15 处）。
+- ruff / eslint / tsc 还没进 CI：这三个在 github 侧从没跑过，先把各自基线跑通再一条一条加进来，见 CMP-14。
+
 ## 本次发版（2026-10-15，`main` <= `dev`）
 
 `origin/main` 之前停在 `b8e035f`，这次把 `dev` 整条历史快进合过去。线上要重新构建镜像才会拿到下面这些：
@@ -32,6 +41,7 @@
 
 ```bash
 cd <仓库目录>
+# 0) 先确认 origin/dev 最新提交 CI 绿（见上面「合入口径」）
 git fetch origin && git checkout main && git merge --ff-only origin/main
 
 # 1) compose 插值用的根 .env（首次）
