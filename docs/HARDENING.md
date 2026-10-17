@@ -72,6 +72,15 @@ docker inspect common-postgres --format '{{index .Config.Labels "com.docker.comp
 docker inspect common-postgres --format '{{json .Mounts}}'   # 数据目录在不在命名卷/宿主目录上；不在就别重建容器
 ```
 
+**先说清这个实例的量级**：`common-postgres` 是**共享栈**，不是博客专用。2026-10-16 18:44 UTC 在机器上枚举过它的可登录角色，一共 4 个（`admin` / `postgres` / `root` / `test`，只有 `postgres` 是超级用户）—— 名字里有 `root` 这种角色挂在公网端口上，本身就说明这个实例在给不止一个项目用。**所以「关 8200」之前要问两句**：① 有没有公网消费者（下面的查询）；② 有没有别的**内部**服务连它（平台自己的库据报可能同实例，这条尚未证实，见工单 [CMP-5](/cmp/issues/CMP-5) 第 7 条 —— 按既定口径，平台侧的角色名/主机/端口不写进这个公开仓库，只留在工单里）。第二句问错方向的代价是「关掉端口才发现平台连不上」，比第一句大。
+
+复认命令（只读，一条就够，别照记忆写）：
+
+```bash
+docker exec -i common-postgres psql -U postgres -d postgres -tAc \
+  "SELECT rolname, rolsuper FROM pg_roles WHERE rolcanlogin ORDER BY rolname;"
+```
+
 再确认没有外部消费者（有输出才算数，别看代码猜）：
 
 ```bash
