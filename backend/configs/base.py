@@ -23,6 +23,12 @@ class BaseSettingsConfig(BaseSettings):
     # Public self-signup. Keep False in production: with no account yet the
     # first registration still runs so the owner can bootstrap.
     ALLOW_REGISTRATION: bool = False
+
+    # OpenAPI schema (/api/v1/openapi.json) plus the /docs and /redoc UIs that
+    # come with it. The document hands out every route, parameter and response
+    # shape without authentication, so it stays off unless an environment asks
+    # for it explicitly (LocalSettings does).
+    EXPOSE_OPENAPI: bool = False
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

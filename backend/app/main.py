@@ -8,10 +8,20 @@ from app.database import engine, Base
 from app.api import admins_router, auth_router, posts_router, projects_router, tags_router, settings_router, stats_router, about_router, comments_router, files_router
 from app.api.seo import router as seo_router
 
+
+def build_openapi_url(expose: bool, api_prefix: str) -> str | None:
+    """按开关决定要不要出 OpenAPI 文档；返回 None 时 FastAPI 连带不挂 /docs、/redoc。
+
+    这份文档不需要登录就能拿到全部路由、参数和响应结构（`/api/v1/admins`、
+    `/api/v1/files/upload` 都在里面），所以默认只在本地开（`configs/local.py`）。
+    """
+    return f"{api_prefix}/openapi.json" if expose else None
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    openapi_url=build_openapi_url(settings.EXPOSE_OPENAPI, settings.API_V1_STR),
 )
 
 # CORS middleware

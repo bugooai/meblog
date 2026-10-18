@@ -89,6 +89,40 @@ docker compose -f docker-compose-backend-production.yml -p meblog-prod up -d
 
 **线上库已经有账号了，所以登录页不会显示初始化面板** —— 它只在账号表为空时出现（新部署或重装才用得上）。
 
+## 本次发版（2026-10-18，`main` <= `dev`）
+
+布谷在卡片 `0dbedb01` 里选了「先发版、他自己在后台改口令」，所以这一批的重点是**让他以后不再需要任何人帮他重置口令**。`dev` 比上一版 `main`（`37fea66`）多出来的、和线上行为有关的部分：
+
+| 变化 | 影响 |
+|---|---|
+| `POST /api/v1/auth/change-password`（`b2b8ecd`） | 知道旧口令就能自己换：先验旧口令（错 → 401），新口令沿用 `min_length=8`，与旧口令相同 → 400 |
+| 后台 `/admin/settings/password`（`b2b8ecd`） | 改密入口进设置页，界面上写明「其它设备不会立刻掉线」（已签发的 JWT 到自然过期才失效） |
+| `backend/reset_admin_password.py`（`b2b8ecd`） | 运维侧一次性重置：口令只从 stdin/环境变量进、打印只有前缀+长度、非本地库要 `--yes`、**账号不存在就停手**。CMP-10 那次是把脚本 `docker cp` 进容器临时跑的，发版之后不必再那样做 |
+| `EXPOSE_OPENAPI`（2026-10-18） | 生产/测试默认**不出** `/api/v1/openapi.json`，本地默认出。上一版线上这个地址不用登录就返回 42 KB 全量路由 |
+| `test_posts.py` 三条过时用例改成断言现在的设计（`365c1d6`） | 后端全量 **166 passed / 0 failed**（2026-10-18 本地实测，`APP_ENV=test`）—— 第一次没有已知失败项 |
+
+服务器上的动作和上一批基本一样（见上面「本次发版（2026-10-15）」那五步），只有两处不同：
+
+- **后端这次必须重建镜像**，不能只 `up -d`：`reset_admin_password.py`、`change-password` 路由和 `EXPOSE_OPENAPI` 都在镜像里，不是环境变量能带进去的。
+- 前端同样要 `--build`：`/admin/settings/password` 是新路由，而 `NEXT_PUBLIC_*` 是构建期烘进产物的。
+
+发版后的四条验收（我在容器外只读也能跑，用来复核运维的结果）：
+
+```bash
+curl -s -o /dev/null -w 'change-password=%{http_code}\n' -X POST \
+  -H 'Content-Type: application/json' -d '{}' \
+  http://meblog.bugooai.cn/api/v1/auth/change-password   # 期望 401（路由在、要登录）；404 = 没发上去
+curl -s -o /dev/null -w 'password-page=%{http_code}\n' \
+  http://meblog.bugooai.cn/admin/settings/password       # 期望 200
+curl -s -o /dev/null -w 'openapi=%{http_code}\n' \
+  http://meblog.bugooai.cn/api/v1/openapi.json           # 期望 404（默认不出文档）
+curl -s http://meblog.bugooai.cn/api/v1/auth/status      # 期望 {"needs_bootstrap":false,...}
+```
+
+发版成功后布谷只需要做一步：用 CMP-10 那串一次性口令登进 `http://meblog.bugooai.cn/login`，到 `/admin/settings/password` 自己设新口令 —— **口令不进工单、不进附件、不进聊天记录**，也不需要第二个人知道明文。改完，那串一次性口令当场失效（同一行的哈希被覆盖）。
+
+两件事互相独立，别混：删掉 CMP-10 里那两条含明文的评论**不会**让口令失效（布谷选的是「只删评论、不换口令」）；他自己改口令才让它失效。两件都做才算收口。另外这次改口令仍然在明文 HTTP 上传一遍 —— 443 还没通（[CMP-5](/cmp/issues/CMP-5)），不在本批范围里。
+
 ## 两个独立问题
 
 ### 1）站点地址没配 —— 优先级最高
@@ -342,4 +376,6 @@ curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -X POST http://meblog.bu
 6. **后台没有改密码 / 找回口令的路径**（2026-10-16 记；同日代码已补进 `dev`，**线上待部署**）：① `POST /api/v1/auth/change-password` —— 先验旧口令再写新哈希，新口令沿用建号口径 `min_length=8`；后台设置页多一张「登录口令」卡片（`/admin/settings/password`）。② `backend/reset_admin_password.py` —— 运维侧一次性重置，口径照 `backend/create_tables.py`：口令只从 stdin/环境变量读、打印只出前缀+长度、非本地库要 `--yes`；**找不到账号就停手**，不代替登录页的初始化面板建号。两件都有测试（`backend/tests/test_auth.py::TestAuthChangePassword`、`backend/tests/test_reset_admin_password.py`）。这两件做完，A 路才算安全，B 路那个「空库谁都能抢管理员」的暴露窗口也就不需要了。
    - **一条取舍写在这里**：改完口令，**已签发的 JWT 仍然有效到自然过期**（`ACCESS_TOKEN_EXPIRE_MINUTES`，默认 7 天）。token 里只有 `sub`，没有口令版本声明，`get_current_user` 分不出签发先后 —— 想让「改口令即踢掉所有会话」，得给 token 加 `pwd_version` 并在解码时比对。这条没做，界面上先把「其它设备不会立刻掉线」写明（`frontend/app/admin/settings/password/page.tsx`）。
    - **仍然没有「忘记密码」**：知道旧口令就自己在后台改；不知道就只能按上一节 A 重置一次，重置前必须先留档。
-7. **生产环境公开 `openapi.json`**（2026-10-18 实测）：`GET /api/v1/openapi.json` → **200 / 42 KB，不用登录**，任何人都能拿到全部路由、参数和响应结构（`/api/v1/admins`、`/api/v1/files/upload` 都在里面）；而 `/docs`、`/redoc` 已经是 404 —— 等于关了门面、留着图纸。根因是 `backend/app/main.py:14` 无条件把 `openapi_url` 设成 `{API_V1_STR}/openapi.json`，没有按环境关。修法一行：生产 `openapi_url=None`，或加 `EXPOSE_OPENAPI` 开关默认 false。**本轮没改代码**，等布谷点头 —— 它和 [CMP-5](/cmp/issues/CMP-5) 那批暴露面收口是同一类事，别两边走岔。
+7. ~~**生产环境公开 `openapi.json`**~~：已修（2026-10-18，`dev`，布谷在卡片 `0dbedb01` 里选了「现在就关」）。`GET /api/v1/openapi.json` 曾经不用登录就返回 **200 / 42 KB** 的全量路由、参数和响应结构（`/api/v1/admins`、`/api/v1/files/upload` 都在里面）。现在由 `EXPOSE_OPENAPI` 控制：`configs/base.py` 默认 `False`，只有 `configs/local.py` 默认 `True`；`backend/app/main.py` 的 `build_openapi_url()` 按它决定传地址还是 `None`（传 `None` 时 FastAPI 连带不挂 `/docs`、`/redoc`）。4 条测试锁住默认口径、开关接线和实际可达性：`backend/tests/test_openapi_exposure.py`。
+   - **更正我上一版的一句归因**：线上 `/docs` 返回 404 并不是「FastAPI 把文档关了」，而是 nginx 只把 `/api/*` 转给后端，`/docs` 落到前端 Next 上。所以「关了门面、留着图纸」这个说法里，门面本来就没开过；真暴露的是 `/api/v1/openapi.json` —— 它恰好在 `/api/*` 这条转发路径上。
+   - 生效条件：这是代码不是环境变量，**必须重建后端镜像**才生效，见上面「本次发版（2026-10-18）」。
