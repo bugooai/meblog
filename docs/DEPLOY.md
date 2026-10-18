@@ -73,7 +73,9 @@
 ```bash
 cd <仓库目录>
 # 0) 先确认 origin/dev 最新提交 CI 绿（见上面「合入口径」）
-git fetch origin && git checkout main && git merge --ff-only origin/main
+# 0.1) 取码：这台机的 origin 是 gitee 且没有 main 分支，别照抄 origin ——
+#      见下面「服务器上取码这件事（2026-10-18 实测）」
+git fetch github && git checkout main && git merge --ff-only github/main
 
 # 1) compose 插值用的根 .env（首次）
 cp .env.example .env && $EDITOR .env        # 至少把 SITE_URL 填对
@@ -88,6 +90,41 @@ docker compose -f docker-compose-backend-production.yml -p meblog-prod up -d
 
 # 4) 验证：见下面「配完怎么验」四条
 ```
+
+### 服务器上取码这件事（2026-10-18 运维发 `5c0229b` 时实测；我原来写的那条命令在这台机上走不通）
+
+原来这里写的是 `git fetch origin && git merge --ff-only origin/main`。**在那台机上是错的**：
+
+| 事实 | 实测 |
+|---|---|
+| 服务器仓库 `/root/code/projects/meblog` 的 `origin` | 指向 **gitee**（`gitee.com/AhernLi-ai/meblog.git`）：`git ls-remote origin` 只有 `refs/heads/dev`=`283307a`（陈旧），**没有 `main`** |
+| `github` 远端（`github.com/bugooai/meblog`） | **时通时不通**：一次 `ls-remote` 拿到 `main`=`dev`=`5c0229b`，随后两次 `fetch` 分别失败于 `curl 16 HTTP2 framing layer`、`curl 28 Failed to connect to github.com port 443 after 129566 ms` |
+| 国内源 | gitee / npmmirror / aliyun-pypi / tsinghua-pypi / `docker.m.daocloud.io` 全部可达（`daemon.json` 的 registry-mirror 就是 daocloud） |
+
+结论：权威源（GitHub）在这台机上**不是稳定可达**，而稳定可达的那个（gitee）**当前不是权威源**。两条路，本次走的是 B：
+
+- **A. 把 gitee 同步成权威源的镜像**（`main`、`dev` 都推上去），之后服务器上 `git fetch origin` 就够用。这与「运维负责 GitHub/Gitee 发布同步」那条分工对得上，也是长期正确的做法 —— gitee 一天不同步，A 路就一天不成立。
+- **B. bundle 送过去**（不依赖服务器访问 GitHub）：
+
+```bash
+# 本侧（能稳定访问 GitHub 的机器）
+git bundle create meblog-main-<sha>.bundle main
+git bundle verify meblog-main-<sha>.bundle      # 要看到 okay + records a complete history
+git bundle list-heads meblog-main-<sha>.bundle  # 记下 SHA
+sha256sum meblog-main-<sha>.bundle
+scp meblog-main-<sha>.bundle root@<server>:/root/tmp/<工单目录>/
+
+# 服务器侧
+sha256sum /root/tmp/<工单目录>/meblog-main-<sha>.bundle   # 必须与本侧逐字节一致
+git bundle verify /root/tmp/<工单目录>/meblog-main-<sha>.bundle
+cd /root/code/projects/meblog
+git fetch /root/tmp/<工单目录>/meblog-main-<sha>.bundle main
+git merge-base --is-ancestor main FETCH_HEAD && echo "ff 可行" || echo "有分叉：停手，别强推"
+git checkout main && git merge --ff-only FETCH_HEAD
+git status --porcelain -uno                              # 必须是空的
+```
+
+`git merge-base --is-ancestor` 那一步不能省：它是「纯快进、不需要强推、不需要改历史」的唯一判据。本次实测服务器原 `main`=`2f34820`、原 `dev`=`5cc24e6`，两条都是 YES。bundle 落在 `/root/tmp/<工单目录>/`（仓库外，不进 git），里面不含任何凭据。
 
 **线上库已经有账号了，所以登录页不会显示初始化面板** —— 它只在账号表为空时出现（新部署或重装才用得上）。
 
