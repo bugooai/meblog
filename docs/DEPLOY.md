@@ -33,6 +33,8 @@
 
 读出来两句话：**站点地址那条已经真修好了**（不再等于「告诉 Google 去爬它自己的机器」）；但**「忘了口令只能找运维」这条线上仍然成立** —— 改密接口和改密页都没上线，所以拿到一次性口令的人自己换不掉它。
 
+> **这张表是发版前的快照。** 同日 13:38 UTC 运维完成发版（线上 = `main` `5c0229b`）之后我又复测了一遍：`change-password`、`/admin/settings/password`、`openapi.json` 三行都已经变了，第二句结论也不再成立 —— 见下面「本次发版（2026-10-18）」里的发版后复测。
+
 ## 合入口径（2026-10-17 起，github 侧 CI）
 
 - `dev` → `main` 仍然只做 `git merge --ff-only`（CMP-7 已经按这条路走过一次，不改这里的口径）。
@@ -111,13 +113,20 @@ docker compose -f docker-compose-backend-production.yml -p meblog-prod up -d
 ```bash
 curl -s -o /dev/null -w 'change-password=%{http_code}\n' -X POST \
   -H 'Content-Type: application/json' -d '{}' \
-  http://meblog.bugooai.cn/api/v1/auth/change-password   # 期望 401（路由在、要登录）；404 = 没发上去
+  http://meblog.bugooai.cn/api/v1/auth/change-password   # 空 body 期望 422；422 或 401 都说明路由已上线，只有 404 = 没发上去
 curl -s -o /dev/null -w 'password-page=%{http_code}\n' \
   http://meblog.bugooai.cn/admin/settings/password       # 期望 200
 curl -s -o /dev/null -w 'openapi=%{http_code}\n' \
   http://meblog.bugooai.cn/api/v1/openapi.json           # 期望 404（默认不出文档）
 curl -s http://meblog.bugooai.cn/api/v1/auth/status      # 期望 {"needs_bootstrap":false,...}
 ```
+
+**这四条 2026-10-18 已经跑过两遍**（运维在服务器侧、我在容器外只读），线上现在就是 `main` = `5c0229b`：`change-password` 空 body → **422**、合法形状 body 无 token → **401**；`/admin/settings/password` → **200 / 21306 B**；`/api/v1/openapi.json` → **404 / 22 B**（发版前是 `200 / 42376 B`）；`auth/status` 不变；`/`、`/login`、`/api/v1/posts`、`robots.txt`、`sitemap.xml` 全部无退化（`<loc>` 仍是域名，`localhost` 0 条）。443 仍不通，属 [CMP-5](/cmp/issues/CMP-5)。
+
+两处口径要记住，免得下次自己吓自己：
+
+- **用空 body 探 `change-password` 会得到 422 而不是 401**：处理函数把 `current_user` 声明成 `Optional[Admin]`，401 是在函数体里抛的（`backend/app/api/auth.py:46`），而 FastAPI 先校验 `PasswordChangeRequest` 再进函数体。所以 422 与 401 都证明路由活着。副作用：未登录调用方能从 422 的 detail 里看到字段名（`old_password` / `new_password`）—— 关掉 `openapi.json` 不等于 schema 完全不可见，这条按「可接受」记，不值得为它改接口形状。
+- **`/admin/settings/password` 那个 200 是 Next 的 RSC 外壳，不是渲染好的表单**：HTML 里没有「登录口令 / 新口令」这些字（页面是 client component，登录态由 `AdminGuard` 在浏览器里判）。所以要配对照组才算证明路由真进了构建：`/admin/settings/nope-12345` → **404**，密码页 → **200** 且 HTML 里出现 `password` 标识（对照组 0 次）。表单实际长什么样只有布谷登录进去才知道 —— 我没有、也不会拿他的口令去试：那会写 `last_login_at`，是一次线上状态变更。
 
 发版成功后布谷只需要做一步：用 CMP-10 那串一次性口令登进 `http://meblog.bugooai.cn/login`，到 `/admin/settings/password` 自己设新口令 —— **口令不进工单、不进附件、不进聊天记录**，也不需要第二个人知道明文。改完，那串一次性口令当场失效（同一行的哈希被覆盖）。
 
