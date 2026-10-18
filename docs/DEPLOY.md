@@ -15,6 +15,24 @@
 | `/feed.xml` | 200，`<link>` 也全是 `http://localhost:3000/...` |
 | 首页 `<head>` | canonical / `og:*` / `twitter:*` / JSON-LD **一个都没有** |
 
+### 2026-10-18 04:00 UTC 复测（只读；本轮 `main`=`37fea66`、`dev`=`a6b67d2`，线上一个字没动）
+
+上表是 2026-10-14 的快照，其中三行已经**不再成立** —— 服务器上那五步后来真被执行过了：
+
+| 项 | 2026-10-14 | 2026-10-18 实测 |
+|---|---|---|
+| `/robots.txt` | `Sitemap: http://localhost:3000/sitemap.xml` | `Sitemap: http://meblog.bugooai.cn/sitemap.xml` ✅ |
+| `/sitemap.xml` | 17 条 `<loc>` 全是 localhost | `<loc>` 全是 `http://meblog.bugooai.cn/...` ✅ |
+| `/` | 200 | 200，`Server: nginx/1.18.0 (Ubuntu)`，1.23 s |
+| `GET /api/v1/auth/status` | 路由不存在 | 200 `{"needs_bootstrap":false,"allow_registration":false}` —— v11 的登录初始化入口已在线，且库里已有账号 |
+| `GET /api/v1/admins` | — | 401（路由在、要鉴权）—— A 段加固已在线 |
+| `POST /api/v1/auth/change-password` | — | **404** —— 「登录后自己改口令」仍未部署（下面「还没解决的」第 6 条） |
+| `GET /admin/settings/password` | — | **404** —— 后台改密页同上 |
+| `GET /api/v1/openapi.json` | 没查过 | **200 / 42 KB 公开可读**，而 `/docs` 是 404（下面第 7 条） |
+| `https://` | 无响应 | 仍不通：`TLS connect error: unexpected eof while reading` |
+
+读出来两句话：**站点地址那条已经真修好了**（不再等于「告诉 Google 去爬它自己的机器」）；但**「忘了口令只能找运维」这条线上仍然成立** —— 改密接口和改密页都没上线，所以拿到一次性口令的人自己换不掉它。
+
 ## 合入口径（2026-10-17 起，github 侧 CI）
 
 - `dev` → `main` 仍然只做 `git merge --ff-only`（CMP-7 已经按这条路走过一次，不改这里的口径）。
@@ -303,6 +321,17 @@ curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -X POST http://meblog.bu
 ```
 
 
+### 想把口令设成 `admin`：先看清这道闸（2026-10-18 本地实证）
+
+布谷 2026-10-17 15:47 提过「我期望是密码也是 admin」。这条路现在**走不通，而且是故意堵的**：
+
+- `backend/reset_admin_password.py` 有 `MIN_PASSWORD_LENGTH = 8`。本地实证（一次性 sqlite 库，没碰任何现有库）：`printf 'admin\n' | .venv/bin/python reset_admin_password.py --stdin` → `新口令太短（来源 stdin）：至少 8 位，和建号/改密接口同口径。`，**exit=2，一个字都没写库**；同一支脚本喂 13 位口令 → `已更新 1 行`，exit=0，事后 `verify_password` 新口令 `True`、`'admin'` `False`。
+- 同一个 8 位下限一共 5 处：`reset_admin_password.MIN_PASSWORD_LENGTH`、`AdminCreate.password`（`backend/app/schemas/admin.py:10`）、注册载荷（`:58`）、`PasswordChangeRequest.new_password`（`:74`）、前端 `MIN_LENGTH`（`frontend/app/admin/settings/password/page.tsx:52`）。
+- **技术上不是不可能**：`get_password_hash("admin")` 照样生成合法 bcrypt 哈希（本地实测 `verify_password("admin", 该哈希) == True`），绕过脚本直接写库就能登。所以这是一道**策略闸**，要设成 `admin` 必须显式决定「把 5 处下限一起改掉」，不能靠手滑绕过。
+- 后果写清楚：站点是公网 HTTP（443 不通）、后台账号名本来就叫 `admin`，口令再是 `admin` = 扫描器第一次尝试就能进。拿到的不只是改文章权限，还有 `POST /api/v1/files/upload`（往你的 OSS bucket 写对象）。
+
+**推荐顺序**：先把带 `change-password` 的版本发上线（`dev` ff 到 `main` + 运维重建前后端镜像），布谷自己登进去把口令改成任何他想要的值 —— 口令全程不进工单、不进附件、不进聊天记录，也不需要第二个人知道明文。真要 `admin` 这个值，得同批装上 HTTPS（[CMP-5](/cmp/issues/CMP-5)）并显式批准降低下限。
+
 ## 还没解决的（按影响排序）
 
 1. **HTTPS 没上**：`https://meblog.bugooai.cn` 无响应。登录态是 cookie + JWT，明文 HTTP 上跑等于裸奔；而且微信/微博对 http 链接的抓取也不如 https 稳定。域名已经解析到机器上，套一层 certbot 就能解决 —— 目标配置见 `deploy/nginx/meblog.bugooai.cn.conf`，装/签/验/撤的完整步骤见 [HARDENING.md](HARDENING.md) 第 3 节（**先签再开 80→443 跳转**，顺序反了签不下来）。
@@ -313,3 +342,4 @@ curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -X POST http://meblog.bu
 6. **后台没有改密码 / 找回口令的路径**（2026-10-16 记；同日代码已补进 `dev`，**线上待部署**）：① `POST /api/v1/auth/change-password` —— 先验旧口令再写新哈希，新口令沿用建号口径 `min_length=8`；后台设置页多一张「登录口令」卡片（`/admin/settings/password`）。② `backend/reset_admin_password.py` —— 运维侧一次性重置，口径照 `backend/create_tables.py`：口令只从 stdin/环境变量读、打印只出前缀+长度、非本地库要 `--yes`；**找不到账号就停手**，不代替登录页的初始化面板建号。两件都有测试（`backend/tests/test_auth.py::TestAuthChangePassword`、`backend/tests/test_reset_admin_password.py`）。这两件做完，A 路才算安全，B 路那个「空库谁都能抢管理员」的暴露窗口也就不需要了。
    - **一条取舍写在这里**：改完口令，**已签发的 JWT 仍然有效到自然过期**（`ACCESS_TOKEN_EXPIRE_MINUTES`，默认 7 天）。token 里只有 `sub`，没有口令版本声明，`get_current_user` 分不出签发先后 —— 想让「改口令即踢掉所有会话」，得给 token 加 `pwd_version` 并在解码时比对。这条没做，界面上先把「其它设备不会立刻掉线」写明（`frontend/app/admin/settings/password/page.tsx`）。
    - **仍然没有「忘记密码」**：知道旧口令就自己在后台改；不知道就只能按上一节 A 重置一次，重置前必须先留档。
+7. **生产环境公开 `openapi.json`**（2026-10-18 实测）：`GET /api/v1/openapi.json` → **200 / 42 KB，不用登录**，任何人都能拿到全部路由、参数和响应结构（`/api/v1/admins`、`/api/v1/files/upload` 都在里面）；而 `/docs`、`/redoc` 已经是 404 —— 等于关了门面、留着图纸。根因是 `backend/app/main.py:14` 无条件把 `openapi_url` 设成 `{API_V1_STR}/openapi.json`，没有按环境关。修法一行：生产 `openapi_url=None`，或加 `EXPOSE_OPENAPI` 开关默认 false。**本轮没改代码**，等布谷点头 —— 它和 [CMP-5](/cmp/issues/CMP-5) 那批暴露面收口是同一类事，别两边走岔。
